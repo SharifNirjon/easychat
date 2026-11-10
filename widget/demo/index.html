@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>easychat widget — hostile host page</title>
+    <!--
+      Isolation test: this page's CSS is deliberately aggressive. If any of it leaks into
+      the widget (red text, serif 20px font, dashed outlines, hidden buttons), isolation is broken.
+    -->
+    <style>
+      * {
+        font: 20px/1.2 serif !important;
+        color: red;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        box-sizing: content-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+        background: #fff6d6;
+      }
+      button {
+        background: hotpink !important;
+        border: 4px dashed blue !important;
+        padding: 20px !important;
+        border-radius: 0 !important;
+      }
+      div,
+      section,
+      header,
+      footer,
+      p {
+        outline: 1px dashed blue;
+        margin: 8px !important;
+      }
+      textarea,
+      input {
+        background: black !important;
+        color: lime !important;
+      }
+      svg {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header id="hero">
+      <h1>Culpine Systems (demo host page)</h1>
+      <p>Intelligence, engineered to the summit. This text is red, serif and uppercase on purpose.</p>
+      <button type="button">A host page button</button>
+    </header>
+    <p id="probe">Layout probe: this paragraph must not move when the widget loads.</p>
+
+    <script src="http://localhost:5173/widget.js" data-site="culpine" async></script>
+  </body>
+</html>

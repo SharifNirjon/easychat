@@ -1,0 +1,611 @@
+/*
+ * easychat widget styles — injected into the Shadow DOM, so host CSS can't select
+ * anything here. Inherited properties (font, color…) still cross the shadow boundary,
+ * which is why .ec-root resets everything with `all: initial` and sets its own values.
+ * Tokens come from docs/designs/design-system.jpeg.
+ */
+
+:host {
+  all: initial;
+}
+
+.ec-root {
+  all: initial;
+
+  /* Brand */
+  --ec-pine9: #0e3429;
+  --ec-pine7: #154a3a;
+  --ec-pine: #1d5c49;
+  --ec-pine1: #e7f1e9;
+  --ec-pine05: #f2f8f4;
+  --ec-lime: #c9ec5c;
+  --ec-lime2: #e6f8ae;
+  /* Text */
+  --ec-ink: #10211b;
+  --ec-ink2: #2b3a33;
+  --ec-muted: #5f6e67;
+  --ec-faint: #8d9890;
+  /* Surface & border */
+  --ec-bg: #fcfdf7;
+  --ec-white: #ffffff;
+  --ec-sunk: #f3f6ef;
+  --ec-line: #e2e8de;
+  --ec-line2: #d3dbce;
+  /* Status */
+  --ec-red: #c3422d;
+  --ec-red1: #fbeee8;
+  --ec-green: #46d17e;
+
+  /* Type */
+  --ec-font: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ec-serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --ec-text: 13.5px;
+  --ec-text-lh: 20px;
+  --ec-caption: 11.5px;
+
+  /* Shape & spacing */
+  --ec-r-panel: 20px;
+  --ec-r-bubble: 14px;
+  --ec-r-card: 12px;
+  --ec-r-btn: 16px;
+  --ec-gap: 16px;
+  --ec-edge: 20px; /* distance from the viewport edges */
+  --ec-launcher: 56px;
+  --ec-shadow: 0 24px 48px -12px rgba(14, 52, 41, 0.28), 0 2px 6px rgba(14, 52, 41, 0.08);
+
+  position: fixed;
+  right: var(--ec-edge);
+  bottom: var(--ec-edge);
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  font-family: var(--ec-font);
+  font-size: var(--ec-text);
+  line-height: var(--ec-text-lh);
+  color: var(--ec-ink);
+  text-align: left;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ec-root *,
+.ec-root *::before,
+.ec-root *::after {
+  box-sizing: border-box;
+}
+
+.ec-root [hidden] {
+  display: none !important;
+}
+
+/* Element resets use :where() (zero specificity) so component classes always win. */
+:where(.ec-root) :where(button, textarea) {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+:where(.ec-root) :where(button) {
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.ec-root :focus-visible {
+  outline: 2px solid var(--ec-pine);
+  outline-offset: 2px;
+}
+
+.ec-root svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Visually hidden, still read by screen readers */
+.ec-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- Launcher (D-01) ---------- */
+
+.ec-launcher {
+  position: relative;
+  width: var(--ec-launcher);
+  height: var(--ec-launcher);
+  border-radius: var(--ec-r-btn);
+  background: var(--ec-pine9) !important;
+  color: var(--ec-lime) !important;
+  display: grid;
+  place-items: center;
+  box-shadow: var(--ec-shadow);
+  transition: transform 0.15s ease;
+}
+
+.ec-launcher:hover {
+  transform: translateY(-1px);
+}
+
+.ec-launcher--badge::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ec-lime);
+  border: 2px solid var(--ec-white);
+}
+
+/* ---------- Teaser ---------- */
+
+.ec-teaser {
+  position: relative;
+  width: 260px;
+  background: var(--ec-white);
+  border: 1px solid var(--ec-line);
+  border-radius: var(--ec-r-card);
+  box-shadow: var(--ec-shadow);
+  animation: ec-rise 0.25s ease-out;
+}
+
+.ec-teaser-body {
+  display: flex;
+  gap: 10px;
+  padding: 12px 28px 12px 12px;
+  text-align: left;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--ec-ink2);
+}
+
+.ec-teaser-body strong {
+  display: block;
+  font-size: var(--ec-caption);
+  font-weight: 700;
+  color: var(--ec-ink);
+  margin-bottom: 2px;
+}
+
+.ec-teaser-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--ec-faint);
+}
+
+.ec-teaser-close:hover {
+  color: var(--ec-ink);
+  background: var(--ec-sunk);
+}
+
+/* ---------- Panel (D-02) ---------- */
+
+.ec-panel {
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  height: min(600px, calc(100dvh - var(--ec-launcher) - var(--ec-edge) * 2 - 12px));
+  background: var(--ec-bg);
+  border: 1px solid var(--ec-line);
+  border-radius: var(--ec-r-panel);
+  box-shadow: var(--ec-shadow);
+  overflow: hidden;
+  animation: ec-rise 0.2s ease-out;
+}
+
+.ec-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--ec-lime);
+  color: var(--ec-pine9);
+  display: grid;
+  place-items: center;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.ec-avatar--sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.ec-avatar--online::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ec-green);
+  border: 2px solid var(--ec-pine9);
+}
+
+/* Header */
+
+.ec-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px 12px 14px;
+  background: var(--ec-pine9);
+  color: var(--ec-white);
+}
+
+.ec-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ec-header-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 14.5px;
+  line-height: 18px;
+}
+
+.ec-badge {
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--ec-lime);
+  color: var(--ec-pine9);
+}
+
+.ec-header-sub {
+  font-size: var(--ec-caption);
+  line-height: 16px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.ec-icon-btn {
+  padding: 6px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.ec-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--ec-white) !important;
+}
+
+/* Scrollable body */
+
+.ec-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain; /* scrolling the chat never scrolls the host page */
+  padding: 20px var(--ec-gap) var(--ec-gap);
+}
+
+/* Welcome (W-01) */
+
+.ec-welcome-title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 29px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ec-ink);
+}
+
+.ec-welcome-title em {
+  font-family: var(--ec-serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.12em;
+  letter-spacing: 0;
+  color: var(--ec-pine);
+}
+
+.ec-welcome-sub {
+  margin: 0 0 14px;
+  color: var(--ec-muted);
+}
+
+.ec-note {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border-radius: var(--ec-r-card);
+  background: var(--ec-pine05);
+  border: 1px solid var(--ec-pine1);
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--ec-ink2);
+}
+
+.ec-note svg {
+  color: var(--ec-pine);
+  margin-top: 1px;
+}
+
+.ec-label {
+  margin: 0 0 8px;
+  font-size: 10.5px;
+  line-height: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ec-faint);
+}
+
+.ec-prompts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.ec-prompt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--ec-white) !important;
+  border: 1px solid var(--ec-line) !important;
+  border-radius: var(--ec-r-card);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--ec-ink);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ec-prompt svg {
+  color: var(--ec-faint);
+}
+
+.ec-prompt:hover {
+  background: var(--ec-pine05) !important;
+  border-color: var(--ec-line2) !important;
+}
+
+/* Messages (W-02) */
+
+.ec-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ec-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.ec-row--user {
+  justify-content: flex-end;
+}
+
+.ec-bubble {
+  max-width: 82%;
+  padding: 10px 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ec-bubble--user {
+  background: var(--ec-pine);
+  color: var(--ec-white);
+  border-radius: var(--ec-r-bubble) var(--ec-r-bubble) 4px var(--ec-r-bubble);
+}
+
+.ec-bubble--assistant,
+.ec-bubble--typing {
+  background: var(--ec-white);
+  border: 1px solid var(--ec-line);
+  border-radius: var(--ec-r-bubble) var(--ec-r-bubble) var(--ec-r-bubble) 4px;
+}
+
+/* Typing indicator (W-03) */
+
+.ec-dots {
+  display: flex;
+  gap: 4px;
+  padding: 5px 0;
+}
+
+.ec-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ec-faint);
+  animation: ec-bounce 1.2s infinite ease-in-out;
+}
+
+.ec-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.ec-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* Error + Retry (W-13 style, inline) */
+
+.ec-bubble--error {
+  background: var(--ec-red1);
+  border: 1px solid rgba(195, 66, 45, 0.25);
+  border-radius: var(--ec-r-bubble) var(--ec-r-bubble) var(--ec-r-bubble) 4px;
+  color: var(--ec-ink2);
+}
+
+.ec-bubble--error p {
+  margin: 0 0 8px;
+}
+
+.ec-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--ec-pine9) !important;
+  color: var(--ec-white) !important;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Composer */
+
+.ec-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 12px 6px;
+  padding: 6px 6px 6px 14px;
+  background: var(--ec-white);
+  border: 1px solid var(--ec-line2);
+  border-radius: var(--ec-r-bubble);
+}
+
+.ec-composer:focus-within {
+  border-color: var(--ec-pine);
+}
+
+.ec-input {
+  flex: 1;
+  min-height: 32px;
+  max-height: 120px;
+  padding: 6px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-size: 16px; /* 16px stops iOS from zooming the page on focus */
+  line-height: var(--ec-text-lh);
+}
+
+.ec-root .ec-input:focus-visible {
+  outline: none; /* the composer border shows focus instead */
+}
+
+.ec-input::placeholder {
+  color: var(--ec-faint);
+}
+
+.ec-send {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--ec-pine) !important;
+  color: var(--ec-white) !important;
+}
+
+.ec-send:disabled {
+  background: var(--ec-sunk) !important;
+  color: var(--ec-faint) !important;
+  cursor: default;
+}
+
+/* Footer */
+
+.ec-footer {
+  padding: 2px 12px 10px;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 14px;
+  color: var(--ec-faint);
+}
+
+.ec-footer a {
+  color: var(--ec-muted);
+  text-decoration: underline;
+}
+
+.ec-footer strong {
+  color: var(--ec-ink2);
+  font-weight: 700;
+}
+
+/* ---------- Mobile: full-screen panel (M-02) ---------- */
+
+@media (max-width: 479px) {
+  .ec-root {
+    --ec-edge: 16px;
+  }
+
+  .ec-root[data-open] {
+    inset: 0;
+  }
+
+  .ec-root[data-open] .ec-panel {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .ec-root[data-open] .ec-launcher,
+  .ec-root[data-open] .ec-teaser {
+    display: none;
+  }
+
+  .ec-header {
+    padding-top: calc(12px + env(safe-area-inset-top));
+  }
+
+  .ec-teaser {
+    width: min(260px, calc(100vw - 32px));
+  }
+}
+
+/* ---------- Motion ---------- */
+
+@keyframes ec-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ec-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ec-root *,
+  .ec-root *::before,
+  .ec-root *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

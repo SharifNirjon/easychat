@@ -1,0 +1,32 @@
+# Local stand-ins for v4's GCP services. Start with: docker compose up -d
+# Ports bind to 127.0.0.1 only — not reachable from other machines.
+services:
+  db:                       # Cloud SQL Postgres 16 + pgvector
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: easychat
+      POSTGRES_PASSWORD: easychat   # local dev only
+      POSTGRES_DB: easychat
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easychat -d easychat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:                    # Memorystore (rate limits, budget, queue)
+    image: redis:7
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:                  # SendGrid stand-in; inbox UI at http://localhost:8025
+    image: axllent/mailpit:v1.21
+    ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
+
+volumes:
+  dbdata:
