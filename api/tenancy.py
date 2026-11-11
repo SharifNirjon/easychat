@@ -1,74 +1,49 @@
-"""Tenant registry: one JSON file per tenant in api/tenants/, validated at startup.
+"""Per-request tenant resolution.
 
-Every request resolves its tenant from the site id + the browser's Origin header
-(CLAUDE.md rule 4). This file-based registry is temporary until the tenants table exists.
+Every request resolves its tenant from the public site key + the browser's Origin header
+(CLAUDE.md rule 4). Tenants and site keys live in Postgres; see migrations/0001_init.sql.
 """
-from pathlib import Path
+from dataclasses import dataclass
+from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, HttpUrl
 
-TENANTS_DIR = Path(__file__).parent / "tenants"
+import db
+from models import SITE_KEY_PATTERN, TenantConfig, TenantLimits, normalize_origin
 
-SITE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]{1,62}$"
-HEX_COLOR = r"^#[0-9A-Fa-f]{6}$"
-
-
-class Greeting(BaseModel):
-    title: str
-    headline: str   # words wrapped in *asterisks* render in the accent serif font
-    subtitle: str
+__all__ = ["SITE_KEY_PATTERN", "Tenant", "resolve_tenant"]
 
 
-class Theme(BaseModel):
-    primary: str = Field(pattern=HEX_COLOR)
-    primary_dark: str = Field(pattern=HEX_COLOR)
-    accent: str = Field(pattern=HEX_COLOR)
-
-
-class Tenant(BaseModel):
-    site_id: str = Field(pattern=SITE_ID_PATTERN)
-    company_name: str
-    bot_name: str
-    greeting: Greeting
-    disclosure: str
-    teaser: str
-    suggested_prompts: list[str] = Field(max_length=3)
-    privacy_url: HttpUrl
-    theme: Theme
-    allowed_origins: list[str] = Field(min_length=1)
+@dataclass(frozen=True)
+class Tenant:
+    id: UUID
+    site_key_id: UUID
+    slug: str
+    config: TenantConfig
+    limits: TenantLimits
 
     def public_config(self) -> dict:
-        """What the widget is allowed to see. Never includes allowed_origins."""
-        return self.model_dump(mode="json", exclude={"allowed_origins"})
+        """What the widget is allowed to see. Never includes origins, limits or ids."""
+        return self.config.model_dump(mode="json")
 
 
-def load_tenants(directory: Path = TENANTS_DIR) -> dict[str, Tenant]:
-    """Load and validate every tenant file. A bad file stops startup on purpose."""
-    tenants: dict[str, Tenant] = {}
-    for path in sorted(directory.glob("*.json")):
-        tenant = Tenant.model_validate_json(path.read_text(encoding="utf-8"))
-        if tenant.site_id in tenants:
-            raise RuntimeError(f"Duplicate site_id {tenant.site_id!r} in {path.name}")
-        tenants[tenant.site_id] = tenant
-    if not tenants:
-        raise RuntimeError(f"No tenant files found in {directory}")
-    return tenants
-
-
-def all_allowed_origins(tenants: dict[str, Tenant]) -> list[str]:
-    """Union of every tenant's origins, used for CORS. Per-tenant checks happen in resolve_tenant."""
-    return sorted({origin for t in tenants.values() for origin in t.allowed_origins})
-
-
-def resolve_tenant(tenants: dict[str, Tenant], site_id: str, origin: str | None) -> Tenant:
-    """Return the tenant for this request, or raise 404 (unknown site) / 403 (origin not allowed).
+async def resolve_tenant(site_key: str, origin: str | None) -> Tenant:
+    """Return the tenant for this request, or raise 404 (unknown key) / 403 (origin not allowed).
 
     A missing Origin is treated as not allowed: browsers always send it on these requests.
+    Non-browser clients can forge Origin, so this is not authentication: the rate limits and
+    budgets in limits.py are what bound abuse.
     """
-    tenant = tenants.get(site_id)
-    if tenant is None:
-        raise HTTPException(status_code=404, detail="Unknown site")
-    if origin is None or origin.rstrip("/") not in tenant.allowed_origins:
+    row = await db.resolve_site_key(site_key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown site key")
+    allowed = {normalize_origin(o) for o in row["allowed_origins"]}
+    if origin is None or normalize_origin(origin) not in allowed:
         raise HTTPException(status_code=403, detail="Origin not allowed for this site")
-    return tenant
+    return Tenant(
+        id=row["tenant_id"],
+        site_key_id=row["site_key_id"],
+        slug=row["slug"],
+        config=TenantConfig.model_validate(row["config"]),
+        limits=TenantLimits.model_validate(row["limits"]),
+    )

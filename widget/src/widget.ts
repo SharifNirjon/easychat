@@ -2,8 +2,8 @@
  * The widget controller: owns the conversation state and wires the UI pieces together.
  * UI classes only render and report events; all decisions live here.
  */
-import { streamChat } from './api';
-import { MAX_HISTORY_TURNS, TEASER_DELAY_MS } from './config';
+import { type FailureKind, streamChat } from './api';
+import { MAX_DISPLAY_MESSAGES, TEASER_DELAY_MS } from './config';
 import { el } from './dom';
 import { loadState, saveState, type SavedState } from './store';
 import type { ChatMessage, WidgetConfig } from './types';
@@ -21,10 +21,11 @@ export class Widget {
   private inFlight: AbortController | null = null;
 
   constructor(
+    private readonly siteKey: string,
     private readonly config: WidgetConfig,
     private readonly shadow: ShadowRoot,
   ) {
-    this.state = loadState(config.site_id);
+    this.state = loadState(siteKey);
 
     this.launcher = new Launcher(config.bot_name, () => (this.state.open ? this.close() : this.open()));
     this.panel = new Panel(config, {
@@ -67,6 +68,7 @@ export class Widget {
   }
 
   private send(text: string): void {
+    this.state.unsent = text;
     this.remember({ role: 'user', content: text });
     this.panel.setWelcomeVisible(false);
     this.panel.messages.clearTransient();
@@ -75,7 +77,10 @@ export class Widget {
     void this.requestReply();
   }
 
-  /** Stream a reply to the current history. Also used by Retry. */
+  /**
+   * Stream a reply. Also used by Retry: if the server never confirmed storing the visitor's
+   * message, it is sent again; otherwise the server is asked to answer the history it has.
+   */
   private async requestReply(): Promise<void> {
     this.inFlight?.abort();
     const controller = new AbortController();
@@ -90,9 +95,14 @@ export class Widget {
     let bubble: ReturnType<typeof list.startReply> | null = null;
 
     await streamChat(
-      this.config.site_id,
-      this.state.messages,
+      { siteKey: this.siteKey, conversationId: this.state.conversationId, message: this.state.unsent },
       {
+        onConversation: (id) => {
+          // The server has stored the visitor's message under this conversation.
+          this.state.conversationId = id;
+          this.state.unsent = null;
+          this.persist();
+        },
         onToken: (text) => {
           bubble ??= list.startReply(); // first token replaces the typing indicator
           bubble.append(text);
@@ -103,8 +113,9 @@ export class Widget {
           this.remember({ role: 'assistant', content: reply });
           this.panel.announce(`${this.config.bot_name}: ${reply}`);
         },
-        onError: (message) => {
+        onError: (message, kind) => {
           bubble?.remove(); // drop a half-finished reply rather than leave it dangling
+          this.handleFailure(kind);
           this.showRetry(message);
         },
       },
@@ -113,6 +124,15 @@ export class Widget {
 
     if (this.inFlight === controller) this.inFlight = null;
     this.panel.setBusy(false);
+  }
+
+  private handleFailure(kind: FailureKind): void {
+    if (kind !== 'conversation-gone') return;
+    // The server no longer has this chat: Retry starts a new one with the last question.
+    const lastUser = [...this.state.messages].reverse().find((m) => m.role === 'user');
+    this.state.conversationId = null;
+    this.state.unsent = lastUser?.content ?? null;
+    this.persist();
   }
 
   private showRetry(message: string): void {
@@ -159,13 +179,13 @@ export class Widget {
     if (isHex(theme.accent)) this.root.style.setProperty('--ec-lime', theme.accent);
   }
 
-  /** Add a message, keeping only the most recent turns (the API drops older ones anyway). */
+  /** Add a message to the display copy (the server keeps the authoritative history). */
   private remember(message: ChatMessage): void {
-    this.state.messages = [...this.state.messages, message].slice(-MAX_HISTORY_TURNS);
+    this.state.messages = [...this.state.messages, message].slice(-MAX_DISPLAY_MESSAGES);
     this.persist();
   }
 
   private persist(): void {
-    saveState(this.config.site_id, this.state);
+    saveState(this.siteKey, this.state);
   }
 }

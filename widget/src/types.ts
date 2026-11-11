@@ -8,7 +8,6 @@ export interface ChatMessage {
 }
 
 export interface WidgetConfig {
-  site_id: string;
   company_name: string;
   bot_name: string;
   greeting: {

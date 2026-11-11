@@ -17,6 +17,7 @@ const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.woff2': 'font/woff2',
 };
 
 /** Tiny static file server. Refuses paths that escape `dir`. */
@@ -37,6 +38,8 @@ function serveStatic(dir, port, label) {
     res.writeHead(200, {
       'Content-Type': CONTENT_TYPES[extname(filePath)] ?? 'application/octet-stream',
       'Cache-Control': 'no-store', // always pick up the latest build
+      // Fonts load cross-origin via the FontFace API, which requires CORS (the CDN must send this too).
+      'Access-Control-Allow-Origin': '*',
     });
     createReadStream(filePath).pipe(res);
   })

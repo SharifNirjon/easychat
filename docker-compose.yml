@@ -28,5 +28,36 @@ services:
     image: axllent/mailpit:v1.21
     ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
 
+  # The API in its production image, against the services above (no local Python needed):
+  #   docker compose --profile api up --build api
+  # Reads api/.env, but points at the compose hosts. Run migrations + seed first (README).
+  api:
+    profiles: ["api"]
+    build: { context: ./api, target: runtime }
+    env_file: api/.env
+    environment:
+      DATABASE_URL: postgresql://easychat_api:local-api-password@db:5432/easychat
+      MIGRATION_DATABASE_URL: postgresql://easychat:easychat@db:5432/easychat
+      REDIS_URL: redis://redis:6379/0
+    ports: ["127.0.0.1:8000:8080"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  # Test suite in a throwaway database (easychat_test) and Redis db 15:
+  #   docker compose run --rm --build api-test
+  api-test:
+    profiles: ["test"]
+    build: { context: ./api, target: test }
+    volumes: ["./api:/app"]        # run the current source without rebuilding
+    environment:
+      APP_ENV: test
+      DATABASE_URL: postgresql://easychat_api_test:test-api-password@db:5432/easychat_test
+      MIGRATION_DATABASE_URL: postgresql://easychat:easychat@db:5432/easychat_test
+      REDIS_URL: redis://redis:6379/15
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
 volumes:
   dbdata:

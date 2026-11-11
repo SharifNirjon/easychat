@@ -1,28 +1,28 @@
-﻿"""Request bodies. Validation here is the first line of defence against bad input."""
-from typing import Literal
+"""Request bodies. Validation here is the first line of defence against bad input."""
+from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from tenancy import SITE_ID_PATTERN
+from tenancy import SITE_KEY_PATTERN
 
 MAX_MESSAGE_CHARS = 4000
 
 
-class Message(BaseModel):
-    # Only "user" and "assistant" are accepted: the client can never send a "system"
-    # message, so it cannot override the assistant's instructions. Anything else -> HTTP 422.
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
-
-
 class ChatRequest(BaseModel):
-    site_id: str = Field(pattern=SITE_ID_PATTERN)
-    messages: list[Message] = Field(min_length=1)
+    """One visitor turn. There is no history and no role field: the server owns the history,
+    so a client can neither send a "system" message nor invent earlier "assistant" turns."""
 
-    @field_validator("messages")
-    @classmethod
-    def last_message_is_from_user(cls, messages: list[Message]) -> list[Message]:
-        # The model should always be answering the visitor, not continuing itself.
-        if messages[-1].role != "user":
-            raise ValueError("last message must be from the user")
-        return messages
+    model_config = ConfigDict(extra="forbid")   # unknown fields (e.g. "messages") -> 422
+
+    site_key: str = Field(pattern=SITE_KEY_PATTERN)
+    conversation_id: UUID | None = None
+    # None = retry: answer the stored history again (its last message must be the visitor's).
+    message: str | None = Field(default=None, min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+    @model_validator(mode="after")
+    def retry_needs_a_conversation(self) -> "ChatRequest":
+        if self.message is None and self.conversation_id is None:
+            raise ValueError("message is required to start a conversation")
+        if self.message is not None and not self.message.strip():
+            raise ValueError("message must not be blank")
+        return self

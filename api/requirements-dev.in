@@ -1,0 +1,5 @@
+# Test-only dependencies, pinned into requirements-dev.txt the same way.
+-r requirements.txt
+pytest
+pytest-asyncio
+httpx

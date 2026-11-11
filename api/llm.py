@@ -5,6 +5,7 @@ turns any exception into a safe message for the visitor (no internals, no secret
 """
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
@@ -47,19 +48,47 @@ def _openrouter_options() -> dict:
     return options
 
 
-async def stream_reply(messages: list[dict]) -> AsyncIterator[str]:
-    """Stream the model's reply as text chunks. Raises on any API error."""
+@dataclass
+class Usage:
+    """Filled in while a reply streams; read it after the stream ends."""
+    model: str | None = None
+    tokens_in: int = 0
+    tokens_out: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.tokens_in + self.tokens_out
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough fallback (~4 chars/token) when the provider doesn't report usage."""
+    return max(1, len(text) // 4)
+
+
+async def stream_reply(messages: list[dict], usage: Usage) -> AsyncIterator[str]:
+    """Stream the model's reply as text chunks, recording usage. Raises on any API error."""
     response = await _client.chat.completions.create(
         model=settings.chat_model,
         messages=messages,
         stream=True,
+        stream_options={"include_usage": True},
         max_tokens=settings.max_tokens,
         extra_body=_openrouter_options(),
     )
+    reply_chars = 0
     async for chunk in response:
+        usage.model = chunk.model or usage.model   # with fallbacks, the model that actually answered
+        if chunk.usage:
+            usage.tokens_in = chunk.usage.prompt_tokens or 0
+            usage.tokens_out = chunk.usage.completion_tokens or 0
         # Some chunks carry only metadata (usage, finish reason) and no text.
         if chunk.choices and chunk.choices[0].delta.content:
+            reply_chars += len(chunk.choices[0].delta.content)
             yield chunk.choices[0].delta.content
+
+    if usage.total == 0:  # provider sent no usage: estimate so budgets still count something
+        usage.tokens_in = sum(estimate_tokens(m["content"]) for m in messages)
+        usage.tokens_out = max(1, reply_chars // 4)
 
 
 def user_facing_error(exc: Exception) -> str:
