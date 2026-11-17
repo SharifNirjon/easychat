@@ -6,11 +6,14 @@ import { type FailureKind, streamChat } from './api';
 import { MAX_DISPLAY_MESSAGES, TEASER_DELAY_MS } from './config';
 import { el } from './dom';
 import { loadState, saveState, type SavedState } from './store';
-import type { ChatMessage, WidgetConfig } from './types';
+import type { Action, Block, ChatMessage, WidgetConfig } from './types';
+import { safeUrl } from './ui/blocks/shared';
 import { createTeaser, Launcher } from './ui/launcher';
 import { Panel } from './ui/panel';
 
 const RESUME_ERROR = "Your last message didn't get a reply.";
+/** Theme keys the tenant may set (api/models.py Theme); each becomes a --ec-<key> CSS variable. */
+const THEME_TOKENS = ['primary', 'accent', 'surface', 'text'];
 
 export class Widget {
   private readonly root: HTMLElement;
@@ -30,6 +33,7 @@ export class Widget {
     this.launcher = new Launcher(config.bot_name, () => (this.state.open ? this.close() : this.open()));
     this.panel = new Panel(config, {
       onSend: (text) => this.send(text),
+      onAction: (action) => this.handleAction(action),
       onMinimize: () => this.close(),
     });
 
@@ -48,7 +52,9 @@ export class Widget {
   open({ focus = true } = {}): void {
     this.hideTeaser();
     this.setOpen(true);
-    this.panel.scrollToBottom();
+    // A conversation opens at the newest message; the home screen opens at its greeting.
+    if (this.state.messages.length) this.panel.scrollToBottom();
+    else this.panel.scrollToTop();
     if (focus) this.panel.focusInput();
   }
 
@@ -67,10 +73,20 @@ export class Widget {
     this.persist();
   }
 
+  /** A tap on a chip, button, card or home tile. Links are normally plain <a> elements. */
+  private handleAction(action: Action): void {
+    if (action.kind === 'send') {
+      this.panel.trySend(action.text);
+      return;
+    }
+    const href = safeUrl(action.url);
+    if (href) window.open(href, '_blank', 'noopener,noreferrer');
+  }
+
   private send(text: string): void {
     this.state.unsent = text;
     this.remember({ role: 'user', content: text });
-    this.panel.setWelcomeVisible(false);
+    this.panel.setHomeVisible(false);
     this.panel.messages.clearTransient();
     this.panel.messages.addUser(text);
     this.panel.scrollToBottom();
@@ -92,6 +108,7 @@ export class Widget {
     this.panel.scrollToBottom();
 
     let reply = '';
+    const blocks: Block[] = [];
     let bubble: ReturnType<typeof list.startReply> | null = null;
 
     await streamChat(
@@ -109,9 +126,14 @@ export class Widget {
           reply += text;
           this.panel.scrollToBottom();
         },
+        onBlock: (block) => {
+          blocks.push(block); // shown together once the reply is complete
+        },
         onDone: () => {
-          this.remember({ role: 'assistant', content: reply });
+          if (blocks.length) list.addBlocks(blocks);
+          this.remember(blocks.length ? { role: 'assistant', content: reply, blocks } : { role: 'assistant', content: reply });
           this.panel.announce(`${this.config.bot_name}: ${reply}`);
+          this.panel.scrollToBottom();
         },
         onError: (message, kind) => {
           bubble?.remove(); // drop a half-finished reply rather than leave it dangling
@@ -144,7 +166,7 @@ export class Widget {
   private restoreConversation(): void {
     const { messages } = this.state;
     this.panel.messages.render(messages);
-    this.panel.setWelcomeVisible(messages.length === 0);
+    this.panel.setHomeVisible(messages.length === 0);
     // The page was left mid-reply: offer to finish it.
     if (messages.length > 0 && messages[messages.length - 1].role === 'user') this.showRetry(RESUME_ERROR);
   }
@@ -170,13 +192,12 @@ export class Widget {
     this.launcher.setBadge(false);
   }
 
-  /** Tenant brand colors override the design-system defaults. */
+  /** The tenant's seed colours; styles.css derives tints, borders and muted text from them. */
   private applyTheme(): void {
-    const { theme } = this.config;
-    const isHex = (value: string) => /^#[0-9a-f]{6}$/i.test(value);
-    if (isHex(theme.primary)) this.root.style.setProperty('--ec-pine', theme.primary);
-    if (isHex(theme.primary_dark)) this.root.style.setProperty('--ec-pine9', theme.primary_dark);
-    if (isHex(theme.accent)) this.root.style.setProperty('--ec-lime', theme.accent);
+    const isHex = (value: unknown) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+    for (const [name, value] of Object.entries(this.config.theme ?? {})) {
+      if (THEME_TOKENS.includes(name) && isHex(value)) this.root.style.setProperty(`--ec-${name}`, value);
+    }
   }
 
   /** Add a message to the display copy (the server keeps the authoritative history). */

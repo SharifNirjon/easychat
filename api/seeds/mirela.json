@@ -1,0 +1,42 @@
+{
+  "slug": "mirela",
+  "name": "Mirela Skincare (demo shop)",
+  "site_key": "pk_local_mirela",
+  "allowed_origins": [
+    "http://localhost:3001"
+  ],
+  "limits": {
+    "daily_tokens": 200000,
+    "monthly_conversations": 100,
+    "conversation_user_turns": 40
+  },
+  "config": {
+    "company_name": "Mirela",
+    "bot_name": "Mira",
+    "greeting": {
+      "title": "Hi there,",
+      "headline": "what can I help you find?",
+      "subtitle": "Product picks for your skin, order updates, returns — ask in English or বাংলা."
+    },
+    "teaser": "Hi! Looking for something for your skin? Ask me anything.",
+    "home": {
+      "promo": { "icon": "tag", "title": "Members save 15% this week", "subtitle": "Free shipping over $40 · ends Sunday", "message": "Tell me about the members offer" },
+      "cards": [
+        { "icon": "sparkle", "title": "Find my routine", "subtitle": "2-minute skin quiz", "message": "Help me find a skincare routine" },
+        { "icon": "truck", "title": "Track an order", "subtitle": "Live status & ETA", "message": "Where is my order?" },
+        { "icon": "return", "title": "Return or exchange", "subtitle": "Free within 30 days", "message": "I want to return something" },
+        { "icon": "gift", "title": "Find a gift", "subtitle": "Sets from $25", "message": "Help me find a gift" }
+      ],
+      "chips_label": "Popular searches",
+      "chips": ["Bestsellers", "New in", "Under $25", "Sensitive skin"]
+    },
+    "privacy_url": "https://example.com/privacy",
+    "theme": {
+      "primary": "#7A3322",
+      "accent": "#F6D5BE",
+      "surface": "#FCF8F4",
+      "text": "#2A1C16"
+    },
+    "image_hosts": ["localhost:3001"]
+  }
+}

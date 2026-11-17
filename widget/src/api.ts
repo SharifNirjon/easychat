@@ -1,6 +1,6 @@
 /** Talks to the easychat API: tenant config + streamed chat replies (SSE over fetch). */
 import { API_BASE } from './config';
-import type { WidgetConfig } from './types';
+import type { Block, WidgetConfig } from './types';
 
 const NETWORK_ERROR = "I couldn't reach the server. Check your connection and try again.";
 const INTERRUPTED_ERROR = 'The reply was interrupted. Please try again.';
@@ -21,6 +21,8 @@ export type FailureKind =
 export interface StreamHandlers {
   onConversation(id: string): void;
   onToken(text: string): void;
+  /** A UI block (already validated by the server). Arrives after the text, before `done`. */
+  onBlock(block: Block): void;
   onDone(): void;
   onError(message: string, kind: FailureKind): void;
 }
@@ -112,6 +114,8 @@ export async function streamChat(turn: ChatTurn, handlers: StreamHandlers, signa
           handlers.onConversation(data.conversation_id);
         } else if (parsed.event === 'token' && typeof data.t === 'string') {
           handlers.onToken(data.t);
+        } else if (parsed.event === 'block' && parsed.data && typeof parsed.data === 'object') {
+          handlers.onBlock(parsed.data as Block);
         } else if (parsed.event === 'done') {
           handlers.onDone();
           return;

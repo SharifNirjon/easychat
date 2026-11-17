@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import HTTPException
+from psycopg.types.json import Jsonb
 
 from db import tenant_tx
 from limits import LimitExceeded
@@ -69,12 +70,19 @@ async def prepare_turn(tenant: Tenant, conversation_id: UUID | None, message: st
 
 
 async def save_reply(
-    tenant: Tenant, conversation_id: UUID, content: str, model: str | None, tokens_in: int, tokens_out: int
+    tenant: Tenant,
+    conversation_id: UUID,
+    content: str,
+    model: str | None,
+    tokens_in: int,
+    tokens_out: int,
+    blocks: list[dict] | None = None,
 ) -> None:
+    """Store the assistant's reply. `blocks` must already have passed blocks.validate_blocks()."""
     async with tenant_tx(tenant.id) as conn:
         await conn.execute(
-            "INSERT INTO messages (tenant_id, conversation_id, role, content, model, tokens_in, tokens_out) "
-            "VALUES (%s, %s, 'assistant', %s, %s, %s, %s)",
-            (tenant.id, conversation_id, content, model, tokens_in, tokens_out),
+            "INSERT INTO messages (tenant_id, conversation_id, role, content, model, tokens_in, tokens_out, blocks) "
+            "VALUES (%s, %s, 'assistant', %s, %s, %s, %s, %s)",
+            (tenant.id, conversation_id, content, model, tokens_in, tokens_out, Jsonb(blocks) if blocks else None),
         )
         await conn.execute("UPDATE conversations SET last_message_at = now() WHERE id = %s", (conversation_id,))

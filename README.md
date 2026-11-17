@@ -28,13 +28,18 @@ Two database logins, on purpose:
 - `DATABASE_URL` — what the API uses: a **non-owner** role, so Postgres row-level security
   always applies to it. Locally, `migrate.py` creates it for you.
 
-## 3. Create the schema and the Culpine tenant
+## 3. Create the schema and the tenants
 ```sh
 docker compose --profile api build api
 docker compose --profile api run --rm api python migrate.py
 docker compose --profile api run --rm api python seed_tenant.py seeds/culpine.json
+docker compose --profile api run --rm api python seed_tenant.py seeds/mirela.json   # fictional demo shop
 ```
-(With a local Python 3.12 venv: `cd api && python migrate.py && python seed_tenant.py seeds/culpine.json`.)
+(With a local Python 3.12 venv: `cd api && python migrate.py && python seed_tenant.py seeds/culpine.json && python seed_tenant.py seeds/mirela.json`.)
+
+Two tenants, same widget, different config: **Culpine** (green, lead-gen) and **Mirela**, a
+fictional skincare shop (terracotta, Mira designs). A tenant's theme, home screen (promo, action
+cards, chips) and allowed image hosts all live in its seed file.
 
 A tenant's site key (`pk_…`) goes in the script tag; its `allowed_origins` decide which websites
 may use it. Anything else gets **403**. Re-running the seed updates the tenant in place.
@@ -69,10 +74,17 @@ npm run dev
 | URL | What |
 |---|---|
 | http://localhost:5173/widget.js | the widget (where the script tag points); fonts at `/fonts/` |
-| http://localhost:3000 | `demo/index.html` — a deliberately hostile host page (red serif CSS) that proves style isolation |
+| http://localhost:3000 | `demo/index.html` — Culpine on a deliberately hostile host page (red serif CSS) that proves style isolation |
+| http://localhost:3000/shop.html | `demo/shop.html` — the fictional Mirela shop (its seed allows only port 3001, so run the demo there: see below) |
 
 Ports can be changed: `WIDGET_PORT=5174 DEMO_PORT=3001 npm run dev`
 (PowerShell: `$env:DEMO_PORT=3001; npm run dev`).
+
+**See every UI block (local only):** open the chat and type `/demo` — it lists the samples
+(`/demo carousel`, `quiz`, `returns`, `timeline`, `form`, `sources`, `buttons`, `card`, `invalid`).
+They run through the real pipeline (server validation → database → SSE `block` events → widget)
+without calling the model; `/demo invalid` shows the server dropping bad blocks. The command is
+ignored outside `APP_ENV=local/test`.
 
 Embed on any allowed site with one tag:
 ```html
@@ -80,8 +92,8 @@ Embed on any allowed site with one tag:
 ```
 
 **On the real Culpine site:** `culpine-website/frontend/vite.config.js` injects that tag in dev only
-(never in production builds). **Update it from `data-site="culpine"` to `data-key="pk_local_culpine"`.**
-Run the widget with the demo moved off port 3000, then the site on 3000:
+(never in production builds). Run the widget with the demo moved to port 3001 (where both demo
+pages work), then the site on 3000:
 ```sh
 # terminal A (widget)
 cd widget && DEMO_PORT=3001 npm run dev
@@ -105,7 +117,8 @@ curl -N -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" -H "Origin: http://localhost:3000" \
   -d '{"site_key":"pk_local_culpine","message":"Hi, what can you do?"}'
 ```
-You should see `event: meta` (with a `conversation_id`), `event: token` lines, then `event: done`.
+You should see `event: meta` (with a `conversation_id`), `event: token` lines, zero or more
+`event: block` lines (validated UI blocks, see `api/blocks.py`), then `event: done`.
 Send the next turn with `"conversation_id": "<that id>"`. The server keeps the history: clients
 send only their new message. Failures arrive as `event: error`, never a hang. Limit hits are
 HTTP 429 with `Retry-After`.

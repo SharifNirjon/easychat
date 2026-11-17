@@ -15,6 +15,11 @@ for var in ("DATABASE_URL", "MIGRATION_DATABASE_URL"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+if sys.platform == "win32":
+    # psycopg's async driver can't use Windows' default ProactorEventLoop (see serve_local.py).
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import httpx  # noqa: E402
 import psycopg  # noqa: E402
 import pytest  # noqa: E402
@@ -30,6 +35,7 @@ ORIGIN_A = "https://shop-a.example"
 ORIGIN_B = "https://shop-b.example"
 KEY_A = "pk_test_tenant_a"
 KEY_B = "pk_test_tenant_b"
+IMAGE_HOST = "localhost:3001"
 
 
 def _tenant_seed(slug: str, key: str, origin: str, **limits) -> TenantSeed:
@@ -45,9 +51,10 @@ def _tenant_seed(slug: str, key: str, origin: str, **limits) -> TenantSeed:
             "greeting": {"title": "Hi", "headline": "What *now*?", "subtitle": "Ask me."},
             "disclosure": "AI assistant.",
             "teaser": "Hello!",
-            "suggested_prompts": ["One?"],
+            "home": {"chips": ["One?"], "cards": [{"icon": "box", "title": "Track", "message": "Where is my order?"}]},
             "privacy_url": "https://example.com/privacy",
-            "theme": {"primary": "#112233", "primary_dark": "#001122", "accent": "#AABBCC"},
+            "theme": {"primary": "#112233", "accent": "#AABBCC"},
+            "image_hosts": [IMAGE_HOST],
         },
     })
 

@@ -17,7 +17,11 @@ Errors before streaming starts are plain JSON {"detail": ...} with 4xx/5xx statu
 SSE events sent by /chat:
   meta   {"conversation_id": "<uuid>"}  first event; the widget sends this id with the next turn
   token  {"t": "<text chunk>"}          one per chunk, in order
+  block  {"type": "...", ...}           zero or more UI blocks after the text (validated, see blocks.py)
   done   {}                             reply finished successfully (and was saved)
+
+In local/test, a message `/demo <name>` replies with sample blocks without calling the model
+(see demo.py).
   error  {"message": "..."}             something failed; the stream then ends (never hangs)
 """
 import asyncio
@@ -34,7 +38,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import conversations
 import db
 import limits
+from blocks import validate_blocks
 from config import settings
+from demo import DemoReply, demo_reply
 from llm import Usage, stream_reply, user_facing_error
 from middleware import BodySizeLimitMiddleware, RequestContextMiddleware, configure_logging
 from prompts import assistant_system_prompt
@@ -114,22 +120,40 @@ def _in_background(coro) -> None:
     task.add_done_callback(_background.discard)
 
 
+def demo_for(tenant: Tenant, turn: conversations.Turn) -> DemoReply | None:
+    """Local/test only: `/demo <name>` answers with sample blocks instead of calling the model."""
+    if not settings.is_dev:
+        return None
+    image_host = tenant.config.image_hosts[0] if tenant.config.image_hosts else None
+    return demo_reply(turn.history[-1]["content"], image_host)
+
+
+async def _as_stream(text: str) -> AsyncIterator[str]:
+    yield text
+
+
 async def reply_events(tenant: Tenant, turn: conversations.Turn) -> AsyncIterator[str]:
-    """Turn the model's text stream into SSE events. Always ends with `done` or `error`."""
+    """Turn a reply into SSE events: meta, tokens, validated blocks, then `done` (or `error`)."""
     yield sse_event("meta", {"conversation_id": str(turn.conversation_id)})
     usage = Usage()
     reply: list[str] = []
+    demo = demo_for(tenant, turn)
     try:
-        async for text in stream_reply(build_prompt(tenant, turn.history), usage):
+        text_stream = _as_stream(demo.text) if demo else stream_reply(build_prompt(tenant, turn.history), usage)
+        async for text in text_stream:
             reply.append(text)
             yield sse_event("token", {"t": text})
 
         if not reply:
             yield sse_event("error", {"message": "The model returned an empty reply."})
             return
+        # Every block is validated here, whatever produced it; invalid ones never leave the server.
+        blocks = validate_blocks(demo.blocks, tenant.asset_policy(settings.is_dev)) if demo else []
         await conversations.save_reply(
-            tenant, turn.conversation_id, "".join(reply), usage.model, usage.tokens_in, usage.tokens_out
+            tenant, turn.conversation_id, "".join(reply), usage.model, usage.tokens_in, usage.tokens_out, blocks
         )
+        for block in blocks:
+            yield sse_event("block", block)
         yield sse_event("done", {})
     except Exception as exc:  # any failure becomes an event so the widget never hangs
         yield sse_event("error", {"message": user_facing_error(exc)})

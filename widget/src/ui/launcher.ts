@@ -2,6 +2,7 @@
 import { el } from '../dom';
 import { icon } from '../icons';
 import type { WidgetConfig } from '../types';
+import { avatar } from './messages';
 
 export class Launcher {
   readonly element: HTMLButtonElement;
@@ -35,7 +36,7 @@ export interface TeaserHandlers {
 
 export function createTeaser(config: WidgetConfig, handlers: TeaserHandlers): HTMLElement {
   const body = el('button', { type: 'button', class: 'ec-teaser-body' }, [
-    el('div', { class: 'ec-avatar ec-avatar--sm', 'aria-hidden': 'true' }, [icon('spark', 14)]),
+    avatar(config.bot_name),
     el('span', {}, [
       el('strong', {}, [`${config.bot_name} · ${config.company_name} AI assistant`]),
       el('span', {}, [config.teaser]),

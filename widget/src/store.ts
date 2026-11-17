@@ -6,7 +6,7 @@
  * conversationId, and never trusts what the browser remembers.
  */
 import { MAX_DISPLAY_MESSAGES } from './config';
-import type { ChatMessage } from './types';
+import type { Block, ChatMessage } from './types';
 
 export interface SavedState {
   conversationId: string | null;
@@ -23,6 +23,16 @@ const storageKey = (siteKey: string) => `easychat:${siteKey}`;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Same cap the API applies per reply (api/blocks.py MAX_BLOCKS_PER_REPLY). */
+const MAX_BLOCKS_PER_MESSAGE = 6;
+
+/** Keep only block-shaped objects. Renderers are defensive too, so this is a cheap first filter. */
+function cleanBlocks(value: unknown): Block[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const blocks = value.filter((b) => b && typeof b === 'object' && typeof b.type === 'string');
+  return blocks.length ? (blocks.slice(0, MAX_BLOCKS_PER_MESSAGE) as Block[]) : undefined;
+}
+
 /** Drop anything that isn't a well-formed user/assistant message (storage is untrusted). */
 function cleanMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
@@ -31,6 +41,10 @@ function cleanMessages(value: unknown): ChatMessage[] {
       (m): m is ChatMessage =>
         m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content !== '',
     )
+    .map((m) => {
+      const blocks = m.role === 'assistant' ? cleanBlocks(m.blocks) : undefined;
+      return blocks ? { role: m.role, content: m.content, blocks } : { role: m.role, content: m.content };
+    })
     .slice(-MAX_DISPLAY_MESSAGES);
 }
 

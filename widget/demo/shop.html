@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mirela — demo skincare shop (fictional)</title>
+    <!--
+      A fictional shop for the second tenant (api/seeds/mirela.json, terracotta theme).
+      Same widget.js as the Culpine demo, different site key: only the tenant config differs.
+      Try "/demo carousel", "/demo timeline", "/demo form" … in the chat (local only).
+    -->
+    <style>
+      body {
+        margin: 0;
+        font: 16px/1.5 Georgia, 'Times New Roman', serif;
+        color: #3b2a22;
+        background: #f7efe7;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 40px;
+        border-bottom: 1px solid #e6d6c8;
+      }
+      .logo {
+        font-size: 24px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+      }
+      main {
+        max-width: 760px;
+        padding: 64px 40px;
+      }
+      h1 {
+        font-size: 48px;
+        line-height: 1.1;
+        margin: 0 0 16px;
+      }
+      .note {
+        margin-top: 32px;
+        padding: 12px 16px;
+        border-left: 3px solid #7a3322;
+        background: #fff8f2;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="logo">Mirela</span>
+      <nav>Shop · Routines · Gifts · Help</nav>
+    </header>
+    <main>
+      <h1>Skincare that keeps it simple.</h1>
+      <p>Serums, creams and sunscreens for everyday skin. This shop is fictional — a demo tenant for easychat.</p>
+      <p class="note">Open the chat and type <code>/demo</code> to see every UI block (local development only).</p>
+    </main>
+
+    <script src="http://localhost:5173/widget.js" data-key="pk_local_mirela" async></script>
+  </body>
+</html>

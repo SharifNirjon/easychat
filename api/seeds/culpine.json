@@ -21,16 +21,27 @@
     },
     "disclosure": "You're chatting with Aria, Culpine's AI assistant. It can make mistakes — a person on the team can follow up anytime.",
     "teaser": "Hi! Planning an AI or computer-vision project? Ask me anything — any language.",
-    "suggested_prompts": [
-      "What does Culpine do?",
-      "Can you build defect detection for my factory?",
-      "How do semantic layers reduce hallucinations?"
-    ],
+    "home": {
+      "cards": [
+        { "icon": "grid", "title": "Our services", "subtitle": "Vision, LLMs, data", "message": "What services does Culpine offer?" },
+        { "icon": "play", "title": "Live AI demos", "subtitle": "Try them in your browser", "message": "Which live AI demos can I try?" },
+        { "icon": "calculator", "title": "MVP calculator", "subtitle": "Estimate cost & time", "message": "How much would an MVP cost?" },
+        { "icon": "calendar", "title": "Book a call", "subtitle": "Free consultation", "message": "I'd like to book a call with the team." }
+      ],
+      "chips_label": "Try asking",
+      "chips": [
+        "What does Culpine do?",
+        "Can you build defect detection for my factory?",
+        "How do semantic layers reduce hallucinations?"
+      ]
+    },
     "privacy_url": "https://culpine.com/privacy",
     "theme": {
-      "primary": "#1D5C49",
-      "primary_dark": "#0E3429",
-      "accent": "#C9EC5C"
-    }
+      "primary": "#154A3A",
+      "accent": "#C9EC5C",
+      "surface": "#FCFDF7",
+      "text": "#10211B"
+    },
+    "image_hosts": []
   }
 }

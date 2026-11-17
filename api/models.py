@@ -1,12 +1,19 @@
-"""Pure data models shared by the API and the CLI scripts. No settings, no I/O."""
-import re
+"""Pure data models shared by the API and the CLI scripts. No settings, no I/O.
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+Note on stored configs: unknown keys in tenants.config are ignored (pydantic's default), so a
+row written by an older seed still loads; re-run seed_tenant.py to pick up new fields."""
+import re
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, Field, HttpUrl, field_validator, model_validator
+
+from blocks import Icon
 
 SITE_KEY_PATTERN = r"^pk_[A-Za-z0-9_]{8,64}$"
 SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{1,62}$"
 HEX_COLOR = r"^#[0-9A-Fa-f]{6}$"
 ORIGIN_PATTERN = r"^https?://[a-z0-9.-]+(:[0-9]{1,5})?$"   # scheme://host[:port], lowercase, no path
+HOST_PATTERN = r"^[a-z0-9.-]+(:[0-9]{1,5})?$"              # host[:port], lowercase, no scheme
 
 
 def normalize_origin(origin: str) -> str:
@@ -20,21 +27,74 @@ class Greeting(BaseModel):
 
 
 class Theme(BaseModel):
-    primary: str = Field(pattern=HEX_COLOR)
-    primary_dark: str = Field(pattern=HEX_COLOR)
-    accent: str = Field(pattern=HEX_COLOR)
+    """Seed colours; the widget derives soft tints, borders and muted text from these."""
+    primary: str = Field(pattern=HEX_COLOR)                       # header, visitor bubbles, main buttons
+    accent: str = Field(pattern=HEX_COLOR)                        # avatar and highlights
+    surface: str = Field(default="#FCFDF7", pattern=HEX_COLOR)    # panel background
+    text: str = Field(default="#10211B", pattern=HEX_COLOR)       # body text
+
+
+def _https_only(url: HttpUrl) -> HttpUrl:
+    if url.scheme != "https":
+        raise ValueError("must be an https URL")
+    return url
+
+
+HttpsUrl = Annotated[HttpUrl, AfterValidator(_https_only)]
+
+
+class HomeAction(BaseModel):
+    """A home-screen tile: tapping it either sends `message` or opens `url` (exactly one)."""
+    icon: Icon
+    title: str = Field(min_length=1, max_length=40)
+    subtitle: str = Field(default="", max_length=60)
+    message: str | None = Field(default=None, min_length=1, max_length=200)
+    url: HttpsUrl | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_target(self) -> "HomeAction":
+        if (self.message is None) == (self.url is None):
+            raise ValueError("give exactly one of message or url")
+        return self
+
+
+class Home(BaseModel):
+    """The welcome screen under the greeting (Mira design `widget.png`)."""
+    promo: HomeAction | None = None
+    cards: list[HomeAction] = Field(default_factory=list, max_length=4)
+    chips_label: str = Field(default="Try asking", max_length=40)
+    chips: list[str] = Field(default_factory=list, max_length=6)
+
+    @field_validator("chips")
+    @classmethod
+    def chips_are_short(cls, chips: list[str]) -> list[str]:
+        if any(not 1 <= len(chip) <= 60 for chip in chips):
+            raise ValueError("each chip must be 1-60 characters")
+        return chips
 
 
 class TenantConfig(BaseModel):
-    """Everything the widget may see about a tenant. Stored in tenants.config."""
+    """Everything the widget may see about a tenant (plus image_hosts, which it doesn't need).
+    Stored in tenants.config."""
     company_name: str = Field(max_length=120)
     bot_name: str = Field(max_length=40)
     greeting: Greeting
-    disclosure: str = Field(max_length=400)
+    disclosure: str | None = Field(default=None, max_length=400)
     teaser: str = Field(max_length=200)
-    suggested_prompts: list[str] = Field(max_length=3)
+    home: Home = Field(default_factory=Home)
     privacy_url: HttpUrl
     theme: Theme
+    # Hosts ("host" or "host:port") that block images may load from. Server-side only.
+    image_hosts: list[str] = Field(default_factory=list, max_length=10)
+
+    @field_validator("image_hosts")
+    @classmethod
+    def hosts_are_bare(cls, hosts: list[str]) -> list[str]:
+        cleaned = [h.strip().lower() for h in hosts]
+        for host in cleaned:
+            if not re.match(HOST_PATTERN, host):
+                raise ValueError(f"not a bare host[:port]: {host!r}")
+        return cleaned
 
 
 class TenantLimits(BaseModel):
