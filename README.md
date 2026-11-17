@@ -52,6 +52,10 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn main:app --reload --port 8000
 ```
+**Windows:** run `python serve_local.py` instead of `uvicorn main:app`. psycopg's async driver
+can't use Windows' default event loop, so plain uvicorn fails at startup with `PoolTimeout`.
+Also keep the database/Redis URLs on `127.0.0.1`, not `localhost`: Windows tries IPv6 `::1`
+first, where Docker isn't listening, and the connection hangs.
 
 ## 5. Run the widget
 ```sh
