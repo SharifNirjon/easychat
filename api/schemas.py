@@ -21,6 +21,7 @@ class ChatRequest(BaseModel):
 
     @model_validator(mode="after")
     def retry_needs_a_conversation(self) -> "ChatRequest":
+        """A retry (no message) must name its conversation; messages can't be blank."""
         if self.message is None and self.conversation_id is None:
             raise ValueError("message is required to start a conversation")
         if self.message is not None and not self.message.strip():

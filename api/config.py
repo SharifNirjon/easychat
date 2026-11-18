@@ -37,6 +37,7 @@ def _choice(name: str, default: str | None, allowed: tuple[str, ...]) -> str:
 
 
 def _int(name: str, default: str) -> int:
+    """Read a positive integer env var."""
     value = int(_required(name, default))
     if value <= 0:
         raise RuntimeError(f"{name} must be a positive integer")
@@ -44,6 +45,7 @@ def _int(name: str, default: str) -> int:
 
 
 def _fraction(name: str, default: str) -> float:
+    """Read an env var that must be a number strictly between 0 and 1."""
     value = float(_required(name, default))
     if not 0 < value < 1:
         raise RuntimeError(f"{name} must be between 0 and 1")
@@ -52,6 +54,7 @@ def _fraction(name: str, default: str) -> float:
 
 @dataclass(frozen=True)
 class Settings:
+    """Every setting the API uses. Built once at import (`settings` below); never mutated."""
     app_env: str                 # local | test | staging | production
 
     # LLM provider (OpenRouter, OpenAI-compatible)
@@ -82,10 +85,12 @@ class Settings:
 
     @property
     def is_dev(self) -> bool:
+        """True in local/test: enables /docs, /demo, PRIVACY_MODE=dev and http://localhost URLs."""
         return self.app_env in DEV_ENVS
 
 
 def load_settings() -> Settings:
+    """Read and validate the environment. Fails fast at startup on anything missing or invalid."""
     app_env = _choice("APP_ENV", None, APP_ENVS)
 
     # Fail closed: strict privacy unless explicitly relaxed, and never relaxed outside dev.

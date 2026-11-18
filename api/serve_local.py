@@ -17,6 +17,7 @@ PORT = int(os.getenv("PORT", "8000"))
 
 
 def main() -> None:
+    """Start uvicorn on a SelectorEventLoop (psycopg's async driver needs one on Windows)."""
     server = uvicorn.Server(uvicorn.Config("main:app", host=HOST, port=PORT))
     # SelectorEventLoop works with psycopg on every OS; it's already the default off Windows.
     asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)

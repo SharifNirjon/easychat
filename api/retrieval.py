@@ -53,6 +53,7 @@ ORDER BY fused.rrf DESC
 
 @dataclass(frozen=True)
 class Hit:
+    """One relevant chunk, with the page it came from."""
     chunk_id: int
     page_id: int
     product_id: int | None
@@ -66,6 +67,7 @@ class Hit:
 
 @dataclass(frozen=True)
 class Retrieval:
+    """The result of one search: relevant hits plus numbers for logs and tuning."""
     hits: list[Hit]       # relevant chunks (score >= floor), best first, at most RAG_TOP_K
     candidates: int       # chunks considered before the floor (for logs and ask.py)
     embed_tokens: int
@@ -89,6 +91,7 @@ def _tsquery_words(text: str) -> str:
 
 
 async def has_knowledge(tenant_id: UUID) -> bool:
+    """Whether the tenant has indexed anything (no knowledge base = answer as before)."""
     async with db.tenant_tx(tenant_id) as conn:
         cur = await conn.execute("SELECT EXISTS (SELECT 1 FROM kb_chunks) AS present")
         return (await cur.fetchone())["present"]

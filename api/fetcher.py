@@ -26,10 +26,11 @@ from urllib.robotparser import RobotFileParser
 import anyio
 import httpcore
 
+from blocks import LOCAL_HOSTS
+
 log = logging.getLogger("easychat.fetcher")
 
 USER_AGENT = "easychat-crawler/0.1 (+site assistant indexing)"
-LOCAL_HOSTS = ("localhost", "127.0.0.1")
 MAX_REDIRECTS = 5
 MAX_URL_CHARS = 2000
 CONNECT_TIMEOUT_SECONDS = 5
@@ -49,6 +50,7 @@ class FetchError(Exception):
     """A URL that was refused or couldn't be fetched. `blocked` = refused by policy, not a network error."""
 
     def __init__(self, message: str, blocked: bool = False, status: int | None = None):
+        """Keep the reason, whether policy refused it, and the HTTP status if any."""
         super().__init__(message)
         self.blocked = blocked
         self.status = status
@@ -56,6 +58,7 @@ class FetchError(Exception):
 
 @dataclass(frozen=True)
 class FetchResult:
+    """A successful (2xx) response, after redirects, with its body fully read."""
     url: str                 # final URL, after redirects
     status: int
     content_type: str        # lowercased media type, no parameters
@@ -64,6 +67,7 @@ class FetchResult:
     headers: dict[str, str]  # lowercased names; repeated headers joined with ", "
 
     def text(self) -> str:
+        """The body decoded with the declared charset (UTF-8 if none), never raising."""
         return self.body.decode(self.charset or "utf-8", errors="replace")
 
 
@@ -92,6 +96,7 @@ def check_url(url: str, allowed_hosts: frozenset[str], allow_local: bool) -> str
 # --- 2 + 3. DNS checks, pinned to the checked address ---------------------------------------
 
 def is_public_ip(address: str) -> bool:
+    """True only for globally routable unicast addresses (never internal ones)."""
     ip = ipaddress.ip_address(address.split("%", 1)[0])   # drop an IPv6 zone id
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped                                 # ::ffff:10.0.0.1 is 10.0.0.1
@@ -106,15 +111,18 @@ class _PublicOnlyBackend(httpcore.AsyncNetworkBackend):
     """
 
     def __init__(self, allow_local: bool):
+        """Wrap httpcore's default network backend; `allow_local` = local dev."""
         self._inner = httpcore.AnyIOBackend()
         self._allow_local = allow_local
 
     def _allowed(self, host: str, address: str) -> bool:
+        """May we connect to this address for this host?"""
         if self._allow_local and host in LOCAL_HOSTS:
             return ipaddress.ip_address(address).is_loopback   # local dev: loopback only, nothing else
         return is_public_ip(address)
 
     async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        """Resolve, refuse if any address is non-public, then connect to a checked one."""
         try:
             infos = await anyio.getaddrinfo(host, port, type=socket.SOCK_STREAM)
         except OSError as exc:
@@ -135,14 +143,18 @@ class _PublicOnlyBackend(httpcore.AsyncNetworkBackend):
         raise httpcore.ConnectError(f"cannot connect to {host}") from last_error
 
     async def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        """Unix sockets are never allowed: they reach local services."""
         raise _BlockedAddress("unix socket")
 
     async def sleep(self, seconds: float) -> None:
+        """Delegate httpcore's internal sleeps to the wrapped backend."""
         await self._inner.sleep(seconds)
 
 
 class _BlockedAddress(httpcore.ConnectError):
+    """Raised by the backend when a host resolves to a non-public address."""
     def __init__(self, host: str):
+        """Name the host in the message (never the address it resolved to)."""
         super().__init__(f"{host} resolves to a non-public address")
 
 
@@ -158,12 +170,14 @@ class Fetcher:
     _robots: dict[str, RobotFileParser | None] = field(default_factory=dict, init=False)
 
     async def __aenter__(self) -> "Fetcher":
+        """Create the connection pool, wired to the public-only network backend."""
         self._pool = httpcore.AsyncConnectionPool(
             network_backend=_PublicOnlyBackend(self.allow_local), max_connections=4, retries=0
         )
         return self
 
     async def __aexit__(self, *exc) -> None:
+        """Close every pooled connection."""
         if self._pool:
             await self._pool.aclose()
 
@@ -203,6 +217,7 @@ class Fetcher:
         return parser is None or parser.can_fetch(USER_AGENT, url)
 
     async def _request(self, url: str, max_bytes: int) -> tuple[int, dict[str, str], bytes]:
+        """One GET without redirects: status, headers and a size-capped body."""
         assert self._pool is not None, "use Fetcher as an async context manager"
         await self._wait_turn(host_key(url))
         request_headers = [
@@ -252,6 +267,7 @@ class Fetcher:
 
 
 def _header_dict(raw: list[tuple[bytes, bytes]]) -> dict[str, str]:
+    """Raw response headers -> {lowercase name: value}; repeated headers are joined."""
     headers: dict[str, str] = {}
     for name, value in raw:
         key = name.decode("latin-1").lower()
@@ -261,6 +277,7 @@ def _header_dict(raw: list[tuple[bytes, bytes]]) -> dict[str, str]:
 
 
 def _parse_content_type(value: str) -> tuple[str, str | None]:
+    """'text/html; charset=UTF-8' -> ('text/html', 'utf-8'); unknown charsets -> None."""
     media_type, _, params = value.partition(";")
     charset = None
     for param in params.split(";"):

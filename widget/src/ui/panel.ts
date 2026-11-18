@@ -25,10 +25,12 @@ function homeAction(item: HomeAction): Action {
   return item.url ? { kind: 'link', url: item.url } : { kind: 'send', text: item.message ?? item.title };
 }
 
+/** A home tile's icon, or the default sparkle if the config names an icon we don't ship. */
 function homeIcon(name: string) {
   return icon(isIconName(name) ? name : FALLBACK_ICON, 18);
 }
 
+/** The open chat panel: header, home screen, messages, composer and footer. */
 export class Panel {
   readonly element: HTMLElement;
   readonly messages: MessageList;
@@ -63,6 +65,7 @@ export class Panel {
     );
   }
 
+  /** Move keyboard focus to the message box. */
   focusInput(): void {
     this.input.focus();
   }
@@ -73,14 +76,17 @@ export class Panel {
     this.updateSendButton();
   }
 
+  /** Show the home screen (new chat) or hide it (once there are messages). */
   setHomeVisible(visible: boolean): void {
     this.home.hidden = !visible;
   }
 
+  /** Scroll to the newest message. */
   scrollToBottom(): void {
     this.body.scrollTop = this.body.scrollHeight;
   }
 
+  /** Scroll to the top (the home screen's greeting). */
   scrollToTop(): void {
     this.body.scrollTop = 0;
   }
@@ -97,6 +103,7 @@ export class Panel {
     this.handlers.onSend(text);
   }
 
+  /** Header: avatar, bot name with an AI badge, 'replies instantly' status, minimize button. */
   private buildHeader(config: WidgetConfig): HTMLElement {
     const minimize = el('button', { type: 'button', class: 'ec-icon-btn', 'aria-label': 'Minimize chat' }, [icon('minus', 20)]);
     minimize.addEventListener('click', () => this.handlers.onMinimize());
@@ -157,6 +164,7 @@ export class Panel {
     return el('div', { class: 'ec-home' }, parts);
   }
 
+  /** Message box and send button. Enter sends; Shift+Enter adds a new line. */
   private buildComposer(): HTMLElement {
     const form = el('form', { class: 'ec-composer' }, [el('div', { class: 'ec-input-wrap' }, [this.input]), this.sendButton]);
 
@@ -178,6 +186,7 @@ export class Panel {
     return form;
   }
 
+  /** Footer: AI disclaimer, the tenant's privacy link, and the easychat credit. */
   private buildFooter(config: WidgetConfig): HTMLElement {
     return el('footer', { class: 'ec-footer' }, [
       'AI assistant · can make mistakes · ',
@@ -187,6 +196,7 @@ export class Panel {
     ]);
   }
 
+  /** Send what's in the message box and clear it (ignored while a reply streams). */
   private submitInput(): void {
     if (this.busy || !this.input.value.trim()) return;
     const text = this.input.value;
@@ -196,11 +206,13 @@ export class Panel {
     this.trySend(text);
   }
 
+  /** Grow the message box with its content, up to MAX_INPUT_HEIGHT_PX. */
   private autoGrow(): void {
     this.input.style.height = 'auto';
     this.input.style.height = `${Math.min(this.input.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`;
   }
 
+  /** Enable Send only when there is text and no reply is streaming. */
   private updateSendButton(): void {
     this.sendButton.disabled = this.busy || this.input.value.trim() === '';
   }

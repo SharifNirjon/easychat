@@ -29,16 +29,19 @@ SITE = frozenset({"shop.example"})
     "https://shop.example/" + "a" * 3000,
 ])
 def test_check_url_refuses(url):
+    """Unsafe or off-site URLs are refused before any network access."""
     with pytest.raises(FetchError) as info:
         check_url(url, SITE, allow_local=False)
     assert info.value.blocked
 
 
 def test_check_url_drops_the_fragment():
+    """#fragments never reach the server and don't make URLs distinct."""
     assert check_url("https://shop.example/p?q=1#reviews", SITE, False) == "https://shop.example/p?q=1"
 
 
 def test_local_http_only_for_localhost_and_only_when_allowed():
+    """http://localhost is a dev-only exception."""
     local = frozenset({"localhost:4173"})
     assert check_url("http://localhost:4173/", local, allow_local=True)
     with pytest.raises(FetchError):
@@ -55,13 +58,16 @@ def test_local_http_only_for_localhost_and_only_when_allowed():
     ("::ffff:10.0.0.1", False),                # IPv4-mapped private
 ])
 def test_is_public_ip(address, public):
+    """Private, loopback, metadata, CGNAT and mapped addresses are not public."""
     assert is_public_ip(address) is public
 
 
 # --- DNS: the connect is refused when the name resolves to a non-public address --------------
 
 def _fake_dns(monkeypatch, addresses):
+    """Make every DNS lookup in the test answer with `addresses`."""
     async def getaddrinfo(host, port, **_):
+        """Fake resolver: the given addresses, in getaddrinfo's tuple format."""
         return [(socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, port))
                 for a in addresses]
     monkeypatch.setattr(anyio, "getaddrinfo", getaddrinfo)
@@ -72,6 +78,7 @@ def _fake_dns(monkeypatch, addresses):
     ["93.184.216.34", "10.0.0.5"],             # one bad record is enough to refuse
 ])
 async def test_private_dns_answers_are_refused(monkeypatch, addresses):
+    """A public name resolving to an internal address is refused (rebinding)."""
     _fake_dns(monkeypatch, addresses)
     async with Fetcher(SITE) as f:
         with pytest.raises(FetchError) as info:
@@ -80,6 +87,7 @@ async def test_private_dns_answers_are_refused(monkeypatch, addresses):
 
 
 async def test_localhost_is_refused_without_allow_local(monkeypatch):
+    """Outside dev, localhost is never fetched."""
     async with Fetcher(frozenset({"localhost"}), allow_local=False) as f:
         with pytest.raises(FetchError):
             await f.get("https://localhost/", HTML_TYPES, 1000)
@@ -88,9 +96,11 @@ async def test_localhost_is_refused_without_allow_local(monkeypatch):
 # --- A real server on 127.0.0.1 ---------------------------------------------------------------
 
 class _Handler(BaseHTTPRequestHandler):
+    """Serves the fixed routes below; anything else is a 404."""
     routes: dict = {}
 
     def do_GET(self):  # noqa: N802
+        """Answer from `routes` with its status, headers and body."""
         status, headers, body = self.routes.get(self.path, (404, {}, b"not found"))
         self.send_response(status)
         for name, value in headers.items():
@@ -100,7 +110,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, *args):
-        pass
+        """Keep the test output quiet."""
 
 
 class _DualStackServer(ThreadingHTTPServer):
@@ -108,12 +118,14 @@ class _DualStackServer(ThreadingHTTPServer):
     address_family = socket.AF_INET6
 
     def server_bind(self):
+        """Accept IPv4 too on the IPv6 socket."""
         self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         super().server_bind()
 
 
 @pytest.fixture(scope="module")
 def server():
+    """A local HTTP server with redirect, size and content-type test routes."""
     try:
         httpd = _DualStackServer(("::", 0), _Handler)
     except OSError:                                   # no IPv6 (e.g. some Docker networks)
@@ -136,14 +148,17 @@ def server():
 
 @pytest.fixture(autouse=True)
 def no_politeness_delay(monkeypatch):
+    """Tests don't need to wait between requests to their own server."""
     monkeypatch.setattr(fetcher, "MIN_SECONDS_BETWEEN_REQUESTS", 0)   # tests needn't wait on themselves
 
 
 def _fetcher(base: str) -> Fetcher:
+    """A Fetcher allowed to reach only the test server's host:port."""
     return Fetcher(frozenset({base.split("//", 1)[1]}), allow_local=True)
 
 
 async def test_fetches_a_page_and_follows_same_site_redirects(server):
+    """Same-site redirects are followed to the final page."""
     async with _fetcher(server) as f:
         result = await f.get(f"{server}/hop", HTML_TYPES, 1000)
     assert result.url == f"{server}/page" and result.text() == "<p>hello</p>" and result.charset == "utf-8"
@@ -151,6 +166,7 @@ async def test_fetches_a_page_and_follows_same_site_redirects(server):
 
 @pytest.mark.parametrize("path", ["/offsite", "/to-metadata"])
 async def test_redirects_off_site_or_to_internal_addresses_are_refused(server, path):
+    """A redirect can't lead off-site or into the network."""
     async with _fetcher(server) as f:
         with pytest.raises(FetchError) as info:
             await f.get(f"{server}{path}", HTML_TYPES, 1000)
@@ -158,12 +174,14 @@ async def test_redirects_off_site_or_to_internal_addresses_are_refused(server, p
 
 
 async def test_redirect_loops_stop(server):
+    """Redirect loops end after MAX_REDIRECTS."""
     async with _fetcher(server) as f:
         with pytest.raises(FetchError, match="too many redirects"):
             await f.get(f"{server}/loop", HTML_TYPES, 1000)
 
 
 async def test_oversized_and_wrong_type_responses_are_refused(server):
+    """Too-large bodies and non-HTML responses are refused."""
     async with _fetcher(server) as f:
         with pytest.raises(FetchError, match="larger than"):
             await f.get(f"{server}/big", HTML_TYPES, 1000)
@@ -172,6 +190,7 @@ async def test_oversized_and_wrong_type_responses_are_refused(server):
 
 
 async def test_http_errors_carry_their_status(server):
+    """HTTP errors keep their status (404 means 'gone' to the crawler)."""
     async with _fetcher(server) as f:
         with pytest.raises(FetchError) as info:
             await f.get(f"{server}/missing", HTML_TYPES, 1000)
@@ -179,6 +198,7 @@ async def test_http_errors_carry_their_status(server):
 
 
 async def test_robots_txt_is_honoured(server):
+    """Paths robots.txt disallows are not crawled."""
     async with _fetcher(server) as f:
         assert await f.allowed_by_robots(f"{server}/page")
         assert not await f.allowed_by_robots(f"{server}/private/x")

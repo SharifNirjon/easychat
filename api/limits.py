@@ -24,11 +24,14 @@ client = aioredis.from_url(settings.redis_url, socket_timeout=2, socket_connect_
 
 
 class LimitExceeded(HTTPException):
+    """HTTP 429 with a visitor-safe message and a Retry-After header."""
     def __init__(self, message: str, retry_after: int):
+        """Build the 429 with its message and Retry-After seconds."""
         super().__init__(status_code=429, detail=message, headers={"Retry-After": str(retry_after)})
 
 
 def _unavailable(exc: Exception) -> HTTPException:
+    """Log that Redis is down and return the 503 to raise (fail closed)."""
     log.error("redis unavailable: %s", type(exc).__name__)
     return HTTPException(status_code=503, detail="Service temporarily unavailable")
 
@@ -46,26 +49,31 @@ async def _hit(key: str, window_seconds: int) -> int:
 
 
 def _now() -> datetime:
+    """Current UTC time (one place, so tests could freeze it)."""
     return datetime.now(UTC)
 
 
 async def check_ip(ip: str) -> None:
+    """Count this message against the visitor IP's per-minute limit; 429 when over."""
     minute = _now().strftime("%Y%m%d%H%M")
     if await _hit(f"rl:ip:{ip}:{minute}", 60) > settings.ip_messages_per_minute:
         raise LimitExceeded("You're sending messages quickly — please wait a moment.", retry_after=60)
 
 
 async def count_new_conversation(tenant_id: UUID, limits: TenantLimits) -> None:
+    """Count a new conversation against the tenant's monthly cap; 429 when over."""
     month = _now().strftime("%Y%m")
     if await _hit(f"rl:conv:{tenant_id}:{month}", 40 * 86400) > limits.monthly_conversations:
         raise LimitExceeded("This assistant has reached its monthly chat limit.", retry_after=86400)
 
 
 def _budget_key(tenant_id: UUID) -> str:
+    """Redis key for a tenant's token spend today (UTC day)."""
     return f"budget:tokens:{tenant_id}:{_now().strftime('%Y%m%d')}"
 
 
 async def check_token_budget(tenant_id: UUID, limits: TenantLimits) -> None:
+    """Refuse (429) before calling the model if the tenant's daily tokens are used up."""
     try:
         used = int(await client.get(_budget_key(tenant_id)) or 0)
     except aioredis.RedisError as exc:
@@ -88,4 +96,5 @@ async def record_tokens(tenant_id: UUID, tokens: int) -> None:
 
 
 async def ping() -> None:
+    """Prove Redis is reachable (used by /ready)."""
     await client.ping()

@@ -14,6 +14,7 @@ const RATING_MAX = 5;
 const RATING_WORDS = ['Poor', 'Fair', 'Okay', 'Really good', 'Loved it'];
 const NOT_YET = "Sending this form isn't available yet.";
 
+/** A labelled text, email or multi-line field. */
 function textField(field: Extract<FormField, { kind: 'text' | 'email' | 'textarea' }>): HTMLElement {
   const id = uid('field');
   const attrs = { id, name: field.name, class: 'ec-field', placeholder: field.placeholder ?? '', required: field.required ?? false };
@@ -21,6 +22,7 @@ function textField(field: Extract<FormField, { kind: 'text' | 'email' | 'textare
   return el('div', { class: 'ec-form-row' }, [el('label', { class: 'ec-label', for: id }, [field.label]), input]);
 }
 
+/** A single labelled checkbox. */
 function checkboxField(field: Extract<FormField, { kind: 'checkbox' }>): HTMLElement {
   return el('label', { class: 'ec-check' }, [el('input', { type: 'checkbox', name: field.name }), field.label]);
 }
@@ -47,6 +49,7 @@ function ratingField(field: Extract<FormField, { kind: 'rating' }>): HTMLElement
   ]);
 }
 
+/** Multi-select tag chips (checkboxes styled as chips) under a group label. */
 function tagsField(field: Extract<FormField, { kind: 'tags' }>): HTMLElement {
   const labelId = uid('tags');
   return el('div', { class: 'ec-form-row', role: 'group', 'aria-labelledby': labelId }, [
@@ -61,6 +64,7 @@ function tagsField(field: Extract<FormField, { kind: 'tags' }>): HTMLElement {
   ]);
 }
 
+/** Render one form field by its kind. */
 function renderField(field: FormField): HTMLElement {
   switch (field.kind) {
     case 'checkbox':
@@ -74,6 +78,7 @@ function renderField(field: FormField): HTMLElement {
   }
 }
 
+/** A small form. Submitting arrives in roadmap step 9, so the button is disabled with a note. */
 export function renderForm(block: FormBlock): HTMLElement {
   const noteId = uid('note');
   const form = el('form', { class: 'ec-panel-card ec-form', novalidate: true }, [

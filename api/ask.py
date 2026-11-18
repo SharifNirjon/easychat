@@ -19,6 +19,7 @@ PREVIEW_CHARS = 110
 
 
 async def ask(slug: str, question: str) -> None:
+    """Print every retrieval candidate for the question, marking the ones the model would see."""
     tenant_id, _ = tenant_by_slug(slug)
     await db.open_pool()
     try:
@@ -38,6 +39,7 @@ async def ask(slug: str, question: str) -> None:
 
 
 def main() -> None:
+    """CLI entry point: validate arguments and run ask() on a psycopg-compatible event loop."""
     if len(sys.argv) != 3:
         sys.exit('usage: python ask.py <tenant-slug> "question"')
     asyncio.run(ask(sys.argv[1], sys.argv[2]), loop_factory=asyncio.SelectorEventLoop)

@@ -32,6 +32,7 @@ PAGE = """<!doctype html><html><head>
 
 
 def test_parse_html_keeps_main_content_and_drops_chrome():
+    """Main text is kept; scripts, menus, footers and forms are not."""
     page = parse_html(PAGE, "https://shop.example/pricing?ref=x")
     text = "\n".join(s.text for s in page.sections)
     assert page.title == "Pricing & plans | Shop"
@@ -44,12 +45,14 @@ def test_parse_html_keeps_main_content_and_drops_chrome():
 
 
 def test_headings_become_a_section_path():
+    """Each section is named by its nearest two headings."""
     page = parse_html(PAGE, "https://shop.example/pricing")
     headings = [s.heading for s in page.sections]
     assert headings == ["Pricing", "Pricing › Starter", "Starter › Limits", "Pricing › Team"]   # nearest two
 
 
 def test_side_by_side_inline_items_and_heading_breaks_keep_words_apart():
+    """Adjacent links/spans and <br> in headings don't glue words."""
     page = parse_html('<h1>Intelligence, engineered<br>to the summit</h1>'
                       '<p><a href="/a">Try demos</a><a href="/b">Estimate</a> <span>(01)</span><span>easychat</span></p>',
                       "https://s.example/")
@@ -58,6 +61,7 @@ def test_side_by_side_inline_items_and_heading_breaks_keep_words_apart():
 
 
 def test_links_and_json_ld():
+    """Links are absolute without fragments; malformed JSON-LD is skipped."""
     page = parse_html(PAGE, "https://shop.example/pricing")
     assert "https://shop.example/about" in page.links           # fragment dropped
     assert "https://other.example/page" in page.links            # off-site links kept; the crawler filters
@@ -66,6 +70,7 @@ def test_links_and_json_ld():
 
 
 def test_contact_links_are_labelled_for_search():
+    """mailto:/tel: links become 'Email: ...' / 'Phone: ...' text."""
     page = parse_html('<p>Write to <a href="mailto:hi%40shop.example?subject=Hi">us</a> or call '
                       '<a href="tel:+8801700000000">+880 1700 000000</a>.</p>'
                       '<footer><a href="mailto:footer@shop.example">x</a></footer>', "https://s.example/")
@@ -75,11 +80,13 @@ def test_contact_links_are_labelled_for_search():
 
 
 def test_noindex_and_pages_without_main():
+    """noindex is detected; pages without <main> keep all their text."""
     page = parse_html('<meta name="robots" content="NOINDEX, follow"><p>Hello</p>', "https://s.example/")
     assert page.noindex and page.sections[0].text == "Hello"
 
 
 def test_sitemap_urlset_and_index():
+    """Both sitemap kinds parse: page lists and sitemap indexes."""
     urlset = (b'<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
               b"<url><loc> https://s.example/a </loc></url><url><loc>https://s.example/b</loc></url></urlset>")
     assert parse_sitemap(urlset) == (["https://s.example/a", "https://s.example/b"], [])
@@ -94,6 +101,7 @@ def test_sitemap_urlset_and_index():
     b"<urlset><url>",
 ])
 def test_bad_sitemaps_are_refused(xml):
+    """DTDs (entity tricks), non-sitemaps and broken XML are refused."""
     with pytest.raises(SitemapError):
         parse_sitemap(xml)
 
@@ -101,6 +109,7 @@ def test_bad_sitemaps_are_refused(xml):
 # --- Products -------------------------------------------------------------------------------
 
 def test_products_from_json_ld_handles_graphs_offers_and_ratings():
+    """Real-world JSON-LD shapes become one clean product."""
     blocks = [{"@context": "https://schema.org", "@graph": [
         {"@type": "WebPage", "name": "ignored"},
         {"@type": ["Product"], "name": "  Glow   Drops ", "url": "/p/glow", "image": ["/img/glow.png"],
@@ -125,6 +134,7 @@ def test_products_from_json_ld_handles_graphs_offers_and_ratings():
     ([], "page"), (["junk", None], "page"),
 ])
 def test_page_kind_from_json_ld(blocks, kind):
+    """Article types (also inside @graph) mark a page as an article."""
     assert page_kind(blocks) == kind
 
 
@@ -135,12 +145,14 @@ def test_page_kind_from_json_ld(blocks, kind):
     ["text", None, 3],
 ])
 def test_odd_json_ld_is_ignored_or_reduced_safely(junk):
+    """Junk JSON-LD never produces a product without a name."""
     products = products_from_json_ld(junk, "https://s.example/")
     assert all(isinstance(p.name, str) and p.name for p in products)
     assert all(p.price is None for p in products)
 
 
 def test_product_fields_are_capped_and_non_http_images_dropped():
+    """Product fields are length-capped; script/negative values dropped."""
     blocks = [{"@type": "Product", "name": "N" * 500, "description": "D" * 5000, "image": "javascript:alert(1)",
                "offers": {"price": "-3"}}]
     [product] = products_from_json_ld(json.loads(json.dumps(blocks)), "https://s.example/")
@@ -151,6 +163,7 @@ def test_product_fields_are_capped_and_non_http_images_dropped():
 # --- Chunking -------------------------------------------------------------------------------
 
 def test_small_sections_share_a_chunk_and_name_their_headings():
+    """Short sections pack into one chunk, each with its heading."""
     chunks = chunk_sections([Section("Pricing", "Plans for everyone."), Section("Pricing › Team", "10 seats.")])
     assert len(chunks) == 1
     assert chunks[0].content == "## Pricing\nPlans for everyone.\n## Pricing › Team\n10 seats."
@@ -158,6 +171,7 @@ def test_small_sections_share_a_chunk_and_name_their_headings():
 
 
 def test_long_sections_split_within_limits_with_overlap():
+    """Long text splits under MAX_CHARS, keeps headings and overlaps."""
     paragraphs = "\n".join(f"Paragraph {i} " + "word " * 60 for i in range(40))
     chunks = chunk_sections([Section("Guide", paragraphs)])
     assert len(chunks) > 3
@@ -168,6 +182,7 @@ def test_long_sections_split_within_limits_with_overlap():
 
 
 def test_one_giant_paragraph_is_cut_and_pages_are_capped():
+    """A wall of text is still cut, and huge pages stop at the chunk cap."""
     chunks = chunk_sections([Section("", "x" * 5000)])
     assert all(len(c.content) <= MAX_CHARS for c in chunks) and "".join(chunks[0].content.split())
     many = chunk_sections([Section("", "\n".join("y " * 400 for _ in range(500)))])

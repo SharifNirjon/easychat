@@ -49,6 +49,10 @@ class AssetPolicy:
 
 
 def _url_parts(value: str, info: ValidationInfo) -> tuple[AssetPolicy, str, str]:
+    """Check the rules every block URL shares; return (policy, "host[:port]", hostname).
+
+    The tenant's AssetPolicy arrives through pydantic's validation context (see validate_blocks).
+    """
     policy = (info.context or {}).get("policy")
     if not isinstance(policy, AssetPolicy):
         raise ValueError("no asset policy given")  # programming error: always validate with a policy
@@ -64,11 +68,13 @@ def _url_parts(value: str, info: ValidationInfo) -> tuple[AssetPolicy, str, str]
 
 
 def _check_link(value: str, info: ValidationInfo) -> str:
+    """A link the visitor may click: any host, as long as the shared URL rules pass."""
     _url_parts(value, info)
     return value
 
 
 def _check_image(value: str, info: ValidationInfo) -> str:
+    """An image loads by itself (no click), so its host must also be on the tenant's allow-list."""
     policy, netloc, _ = _url_parts(value, info)
     if netloc not in policy.image_hosts:
         raise ValueError(f"image host {netloc!r} is not allowed for this tenant")
@@ -102,6 +108,7 @@ Action = Annotated[SendAction | LinkAction, Field(discriminator="kind")]
 
 
 class Image(Strict):
+    """A picture: URL (allow-listed host) and alt text for screen readers."""
     url: ImageUrl
     alt: Annotated[str, Field(max_length=120)] = ""
 
@@ -109,6 +116,7 @@ class Image(Strict):
 # --- Block types --------------------------------------------------------------------------
 
 class Chip(Strict):
+    """One quick-reply pill: a short label and what tapping it does."""
     label: Label
     action: Action
 
@@ -120,12 +128,14 @@ class ChipsBlock(Strict):
 
 
 class Button(Strict):
+    """A full button; `primary` is the filled main action, `secondary` the outlined one."""
     label: Label
     style: Literal["primary", "secondary"] = "secondary"
     action: Action
 
 
 class ButtonsBlock(Strict):
+    """One to three buttons in a row (e.g. "Change address", "Talk to a person")."""
     type: Literal["buttons"]
     items: Annotated[list[Button], Field(min_length=1, max_length=3)]
 
@@ -143,6 +153,7 @@ class Card(Strict):
 
 
 class CardBlock(Strict):
+    """A single card on its own (one product or service)."""
     type: Literal["card"]
     card: Card
 
@@ -154,11 +165,13 @@ class CarouselBlock(Strict):
 
 
 class Step(Strict):
+    """"Step 2 of 4" progress for a multi-question flow."""
     current: Annotated[int, Field(ge=1, le=20)]
     total: Annotated[int, Field(ge=1, le=20)]
 
 
 class Choice(Strict):
+    """One option in a choice list: stable id, label, optional detail line and thumbnail."""
     id: FieldName
     label: Line
     detail: Line | None = None
@@ -176,12 +189,14 @@ class ChoiceListBlock(Strict):
 
 
 class TimelineStep(Strict):
+    """One point on a timeline: done, current (highlighted) or still upcoming."""
     label: Line
     detail: Line | None = None
     state: Literal["done", "current", "upcoming"]
 
 
 class Status(Strict):
+    """The coloured status pill on a timeline ("Out for delivery")."""
     label: Label
     tone: Tone = "info"
 
@@ -198,6 +213,7 @@ class TimelineBlock(Strict):
 
 
 class TextField(Strict):
+    """A one-line text, email, or multi-line (textarea) form field."""
     kind: Literal["text", "email", "textarea"]
     name: FieldName
     label: Label
@@ -206,12 +222,14 @@ class TextField(Strict):
 
 
 class CheckboxField(Strict):
+    """A single yes/no checkbox ("Also tell me about new launches")."""
     kind: Literal["checkbox"]
     name: FieldName
     label: Line
 
 
 class RatingField(Strict):
+    """A 1-5 star rating input."""
     kind: Literal["rating"]
     name: FieldName
     label: Label
@@ -237,6 +255,7 @@ class FormBlock(Strict):
 
 
 class Source(Strict):
+    """One page an answer came from: its title and https URL."""
     title: Line
     url: LinkUrl
 
@@ -248,6 +267,7 @@ class SourcesBlock(Strict):
 
 
 class NoticeBlock(Strict):
+    """A short coloured note (info, success, warning, danger), e.g. the "I don't know" fallback."""
     type: Literal["notice"]
     tone: Tone = "info"
     text: Paragraph

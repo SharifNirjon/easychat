@@ -20,10 +20,12 @@ pool = AsyncConnectionPool(
 
 
 async def open_pool() -> None:
+    """Open the connection pool (called once at startup, in main.lifespan)."""
     await pool.open(wait=True, timeout=10)
 
 
 async def close_pool() -> None:
+    """Close every pooled connection (called at shutdown)."""
     await pool.close()
 
 
@@ -44,5 +46,6 @@ async def resolve_site_key(public_key: str) -> dict | None:
 
 
 async def ping() -> None:
+    """Cheapest possible query: proves Postgres is reachable (used by /ready)."""
     async with pool.connection() as conn:
         await conn.execute("SELECT 1")

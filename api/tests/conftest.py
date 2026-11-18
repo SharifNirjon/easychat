@@ -39,6 +39,7 @@ IMAGE_HOST = "localhost:3001"
 
 
 def _tenant_seed(slug: str, key: str, origin: str, **limits) -> TenantSeed:
+    """A minimal valid tenant definition for tests; `limits` overrides plan caps."""
     return TenantSeed.model_validate({
         "slug": slug,
         "name": slug.title(),
@@ -60,6 +61,7 @@ def _tenant_seed(slug: str, key: str, origin: str, **limits) -> TenantSeed:
 
 
 def _recreate_test_database() -> None:
+    """Drop and recreate the *_test database so every run starts clean."""
     url = urlparse(OWNER_URL)
     name = url.path.lstrip("/")
     admin_url = urlunparse(url._replace(path="/postgres"))
@@ -90,6 +92,7 @@ def owner_db():
 
 @pytest.fixture(autouse=True)
 def clean_state(database):
+    """Empty conversations/messages and the Redis test db before each test."""
     with psycopg.connect(OWNER_URL, autocommit=True) as conn:
         conn.execute("TRUNCATE messages, conversations")
     redis.from_url(os.environ["REDIS_URL"]).flushdb()
@@ -100,11 +103,13 @@ class FakeLLM:
     """Stands in for llm.stream_reply. Records the prompts it was given."""
 
     def __init__(self):
+        """Start with a two-chunk reply, no recorded calls and no failure."""
         self.calls: list[list[dict]] = []
         self.reply = ["Hello", " there"]
         self.fail_with: Exception | None = None
 
     async def __call__(self, messages, usage):
+        """Record the prompt, then stream the canned reply (or raise `fail_with`)."""
         self.calls.append(messages)
         if self.fail_with:
             raise self.fail_with
@@ -116,6 +121,7 @@ class FakeLLM:
 
 @pytest.fixture
 def fake_llm(monkeypatch):
+    """Replace the model call in main with a FakeLLM for the test's duration."""
     import main
     fake = FakeLLM()
     monkeypatch.setattr(main, "stream_reply", fake)
@@ -124,6 +130,7 @@ def fake_llm(monkeypatch):
 
 @pytest.fixture(scope="session")
 async def app():
+    """The FastAPI app with its database pool open, shared by the whole session."""
     import db
     import main
     await db.open_pool()
@@ -133,6 +140,7 @@ async def app():
 
 @pytest.fixture
 async def client(app, fake_llm):
+    """An HTTP client calling the app in-process, from a fixed public client IP."""
     transport = httpx.ASGITransport(app=app, client=("203.0.113.7", 50000))
     async with httpx.AsyncClient(transport=transport, base_url="http://api.test") as c:
         yield c

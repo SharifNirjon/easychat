@@ -41,6 +41,7 @@ export function actionControl(
   return button;
 }
 
+/** A lazy-loaded image that doesn't tell its host which page it is on; null for unsafe URLs. */
 export function image(ref: ImageRef | undefined, className: string): HTMLImageElement | null {
   const src = ref && safeUrl(ref.url);
   if (!src) return null;

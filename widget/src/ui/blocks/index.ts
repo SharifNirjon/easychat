@@ -10,6 +10,7 @@ import { renderForm } from './form';
 import { renderNotice, renderSources } from './info';
 import { renderTimeline } from './timeline';
 
+/** Pick the renderer for the block's type; unknown types render nothing. */
 function renderOne(block: Block, onAction: ActionHandler): HTMLElement | null {
   switch (block.type) {
     case 'chips':
@@ -35,6 +36,7 @@ function renderOne(block: Block, onAction: ActionHandler): HTMLElement | null {
   }
 }
 
+/** Render one block, or null if it is unknown or malformed (never throws). */
 export function renderBlock(block: Block, onAction: ActionHandler): HTMLElement | null {
   try {
     return renderOne(block, onAction);

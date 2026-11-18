@@ -66,6 +66,7 @@ _background: set[asyncio.Task] = set()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Open the database pool at startup; close it and the Redis client at shutdown."""
     await db.open_pool()
     try:
         yield
@@ -155,6 +156,7 @@ def client_ip(request: Request) -> str:
 
 
 def _in_background(coro) -> None:
+    """Run bookkeeping after the response, keeping a reference so it isn't garbage-collected."""
     task = asyncio.create_task(coro)
     _background.add(task)
     task.add_done_callback(_background.discard)
@@ -169,6 +171,7 @@ def demo_for(tenant: Tenant, turn: conversations.Turn) -> DemoReply | None:
 
 
 async def _as_stream(text: str) -> AsyncIterator[str]:
+    """Wrap a fixed text (demo replies) as a one-chunk stream, like the model's."""
     yield text
 
 
@@ -228,11 +231,13 @@ async def reply_events(tenant: Tenant, turn: conversations.Turn) -> AsyncIterato
 
 @app.get("/health")
 def health() -> dict:
+    """Liveness: the process is up. Checks nothing else and reveals nothing."""
     return {"ok": True}
 
 
 @app.get("/ready")
 async def ready() -> JSONResponse:
+    """Readiness: Postgres and Redis both answer. 503 otherwise (details only in logs)."""
     try:
         await db.ping()
         await limits.ping()
@@ -247,12 +252,14 @@ async def widget_config(
     origin: OriginHeader = None,
     key: str = Query(pattern=SITE_KEY_PATTERN),
 ) -> dict:
+    """The tenant's public widget config, for an allowed Origin only."""
     tenant = await resolve_tenant(key, origin)
     return tenant.public_config()
 
 
 @app.post("/chat")
 async def chat(body: ChatRequest, request: Request, origin: OriginHeader = None) -> StreamingResponse:
+    """Check the tenant, limits and budget, store the visitor's message, then stream the reply."""
     tenant = await resolve_tenant(body.site_key, origin)
 
     # Cheapest checks first; all of them happen before any model call.

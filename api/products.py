@@ -21,6 +21,7 @@ AVAILABILITY = {                    # schema.org ItemAvailability -> short label
 
 @dataclass(frozen=True)
 class Product:
+    """One product as indexed: every field optional except name and URL, all length-capped."""
     name: str
     url: str
     description: str = ""
@@ -49,6 +50,7 @@ class Product:
 
 
 def _text(value, limit: int) -> str | None:
+    """A JSON-LD value as clean text (first item of a list, `name` of an object), capped."""
     if isinstance(value, dict):
         value = value.get("name") or value.get("@value")
     if isinstance(value, list):
@@ -62,6 +64,7 @@ def _text(value, limit: int) -> str | None:
 
 
 def _number(value) -> float | None:
+    """A JSON-LD value as a finite float ('1,240' and '12.50' included), else None."""
     if isinstance(value, bool):
         return None
     try:
@@ -72,12 +75,14 @@ def _number(value) -> float | None:
 
 
 def _types(node: dict) -> set[str]:
+    """A node's @type(s), lowercased without the schema.org prefix."""
     kind = node.get("@type")
     kinds = kind if isinstance(kind, list) else [kind]
     return {k.rsplit("/", 1)[-1].lower() for k in kinds if isinstance(k, str)}
 
 
 def _url(value, base_url: str) -> str | None:
+    """A JSON-LD URL (string, object or list) made absolute; only http(s) is kept."""
     if isinstance(value, dict):
         value = value.get("url") or value.get("contentUrl") or value.get("@id")
     if isinstance(value, list):
@@ -89,6 +94,7 @@ def _url(value, base_url: str) -> str | None:
 
 
 def _offer(node) -> dict | None:
+    """The node's first offer (offers may be one object or a list)."""
     offers = node.get("offers")
     if isinstance(offers, list):
         offers = offers[0] if offers else None
@@ -96,6 +102,7 @@ def _offer(node) -> dict | None:
 
 
 def _price(offer: dict) -> tuple[str | None, str | None]:
+    """Price and currency from an offer (price, lowPrice or priceSpecification)."""
     value = offer.get("price", offer.get("lowPrice"))
     if value is None and isinstance(offer.get("priceSpecification"), dict):
         value = offer["priceSpecification"].get("price")
@@ -108,6 +115,7 @@ def _price(offer: dict) -> tuple[str | None, str | None]:
 
 
 def _product(node: dict, page_url: str) -> Product | None:
+    """One Product node -> Product, or None if it has no usable name."""
     name = _text(node.get("name"), 200)
     if not name:
         return None
@@ -160,6 +168,7 @@ def products_from_json_ld(blocks: list, page_url: str) -> list[Product]:
     visited = 0
 
     def walk(node, depth: int) -> None:
+        """Visit nodes depth-first, collecting products; bounded by depth and count."""
         nonlocal visited
         if depth > MAX_DEPTH or visited >= MAX_NODES or len(found) >= MAX_PRODUCTS_PER_PAGE:
             return

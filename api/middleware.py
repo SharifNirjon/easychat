@@ -17,6 +17,7 @@ class JsonFormatter(logging.Formatter):
     """One JSON object per line: what Cloud Logging (and jq) expect."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Serialise one log record (plus access-log fields if present) as JSON."""
         entry = {
             "severity": record.levelname,
             "logger": record.name,
@@ -32,6 +33,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging() -> None:
+    """Send all logs to stderr as JSON lines, replacing uvicorn's access log."""
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
@@ -45,10 +47,12 @@ class RequestContextMiddleware:
     and writes one access-log line per request. Never logs bodies, query strings or headers."""
 
     def __init__(self, app):
+        """Wrap the ASGI app."""
         self.app = app
         self.log = logging.getLogger("easychat.access")
 
     async def __call__(self, scope, receive, send):
+        """Attach a request id, echo it in the response, log one access line."""
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
@@ -59,6 +63,7 @@ class RequestContextMiddleware:
         started = time.perf_counter()
 
         async def send_with_id(message):
+            """Record the response status and add the X-Request-ID header."""
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message["status"]
@@ -84,10 +89,12 @@ class BodySizeLimitMiddleware:
     """Rejects bodies over `max_bytes` with 413, whether or not Content-Length is honest."""
 
     def __init__(self, app, max_bytes: int):
+        """Wrap the ASGI app with a maximum body size in bytes."""
         self.app = app
         self.max_bytes = max_bytes
 
     async def __call__(self, scope, receive, send):
+        """413 early on a too-large Content-Length, else count bytes as they arrive."""
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
@@ -98,6 +105,7 @@ class BodySizeLimitMiddleware:
         received = 0
 
         async def limited_receive():
+            """Pass body chunks through, raising 413 once the total exceeds the cap."""
             nonlocal received
             message = await receive()
             if message["type"] == "http.request":
@@ -111,6 +119,7 @@ class BodySizeLimitMiddleware:
 
     @staticmethod
     async def _reject(send):
+        """Send a 413 JSON response without calling the app at all."""
         body = b'{"detail":"Request body too large"}'
         await send({
             "type": "http.response.start",

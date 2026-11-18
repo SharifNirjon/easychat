@@ -19,6 +19,7 @@ export interface SavedState {
 
 const EMPTY: SavedState = { conversationId: null, unsent: null, messages: [], open: false, teaserSeen: false };
 
+/** One sessionStorage entry per site key, so two widgets on one page don't collide. */
 const storageKey = (siteKey: string) => `easychat:${siteKey}`;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,6 +49,7 @@ function cleanMessages(value: unknown): ChatMessage[] {
     .slice(-MAX_DISPLAY_MESSAGES);
 }
 
+/** This tab's saved state, cleaned of anything malformed; empty state if none or unreadable. */
 export function loadState(siteKey: string): SavedState {
   try {
     const raw = sessionStorage.getItem(storageKey(siteKey));
@@ -67,6 +69,7 @@ export function loadState(siteKey: string): SavedState {
   }
 }
 
+/** Save this tab's state (capped to MAX_DISPLAY_MESSAGES); a full or blocked storage is ignored. */
 export function saveState(siteKey: string, state: SavedState): void {
   try {
     const trimmed = { ...state, messages: state.messages.slice(-MAX_DISPLAY_MESSAGES) };

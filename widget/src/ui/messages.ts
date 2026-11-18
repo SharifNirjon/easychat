@@ -18,6 +18,7 @@ export function avatar(botName: string, size: 'sm' | 'lg' = 'sm'): HTMLElement {
   return el('div', { class: `ec-avatar ec-avatar--${size}`, 'aria-hidden': 'true' }, [botName.charAt(0).toUpperCase()]);
 }
 
+/** The scrolling conversation: message rows, block groups and one transient row (typing or error). */
 export class MessageList {
   readonly element: HTMLDivElement;
   private transient: HTMLElement | null = null; // typing indicator or error row
@@ -31,6 +32,7 @@ export class MessageList {
     this.element = el('div', { class: 'ec-messages', role: 'list', 'aria-label': `Conversation with ${botName}` });
   }
 
+  /** Replace the list with a saved conversation (only the last reply's blocks stay usable). */
   render(messages: ChatMessage[]): void {
     this.element.replaceChildren();
     for (const message of messages) {
@@ -43,11 +45,13 @@ export class MessageList {
     this.retireBlocks(keepLast ? this.element.lastElementChild : null);
   }
 
+  /** Append the visitor's message and retire every earlier block group. */
   addUser(text: string): void {
     this.retireBlocks(null); // the visitor moved on: earlier chips/choices can't be used twice
     this.element.append(this.row('user', text).row);
   }
 
+  /** Render a reply's blocks as one group; blocks that fail to render are skipped. */
   addBlocks(blocks: Block[]): void {
     const rendered = blocks
       .map((block) => renderBlock(block, this.onAction))
@@ -55,12 +59,14 @@ export class MessageList {
     if (rendered.length) this.element.append(el('div', { class: 'ec-blocks', role: 'listitem' }, rendered));
   }
 
+  /** Show the animated typing indicator until the first token arrives. */
   showTyping(): void {
     const dots = el('span', { class: 'ec-dots', 'aria-hidden': 'true' }, [el('i'), el('i'), el('i')]);
     const label = el('span', { class: 'ec-sr' }, [`${this.botName} is typing`]);
     this.setTransient(this.assistantRow(el('div', { class: 'ec-bubble ec-bubble--typing' }, [dots, label])));
   }
 
+  /** Show an error bubble with a Retry button (one click only). */
   showError(message: string, onRetry: () => void): void {
     const retry = el('button', { type: 'button', class: 'ec-retry' }, [icon('retry', 14), 'Retry']);
     retry.addEventListener('click', onRetry, { once: true });
@@ -68,11 +74,13 @@ export class MessageList {
     this.setTransient(this.assistantRow(bubble));
   }
 
+  /** Remove the typing indicator or error row, if any. */
   clearTransient(): void {
     this.transient?.remove();
     this.transient = null;
   }
 
+  /** Start an empty assistant bubble and return a handle to append streamed text to it. */
   startReply(): ReplyBubble {
     this.clearTransient();
     const { row, bubble } = this.row('assistant', '');
@@ -93,18 +101,21 @@ export class MessageList {
     });
   }
 
+  /** Replace the current transient row (typing/error) with a new one. */
   private setTransient(row: HTMLElement): void {
     this.clearTransient();
     this.transient = row;
     this.element.append(row);
   }
 
+  /** A message row: user bubbles on the right, assistant bubbles with the avatar on the left. */
   private row(role: Role, text: string): { row: HTMLElement; bubble: HTMLElement } {
     const bubble = el('div', { class: `ec-bubble ec-bubble--${role}` }, [text]);
     const row = role === 'user' ? el('div', { class: 'ec-row ec-row--user', role: 'listitem' }, [bubble]) : this.assistantRow(bubble);
     return { row, bubble };
   }
 
+  /** An assistant row: avatar plus bubble. */
   private assistantRow(bubble: HTMLElement): HTMLElement {
     return el('div', { class: 'ec-row ec-row--assistant', role: 'listitem' }, [avatar(this.botName), bubble]);
   }

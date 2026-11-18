@@ -24,6 +24,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
 
 @dataclass(frozen=True)
 class Chunk:
+    """One piece of a page, small enough to embed and to quote to the model."""
     ord: int
     heading: str       # section of the chunk's first paragraph ("" if none)
     content: str       # what the model sees as context
@@ -34,6 +35,7 @@ class Chunk:
 
 
 def text_hash(text: str) -> str:
+    """Fingerprint of exact text: identical chunks reuse one stored vector (no new embedding cost)."""
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -61,6 +63,7 @@ def _split_long(text: str) -> list[str]:
 
 
 def _paragraphs(text: str) -> list[str]:
+    """A section's non-empty paragraphs, each at most PIECE_CHARS long."""
     out: list[str] = []
     for paragraph in text.split("\n"):
         out.extend([paragraph] if len(paragraph) <= PIECE_CHARS else _split_long(paragraph))
@@ -77,12 +80,14 @@ def _tail(text: str) -> str:
 
 
 def chunk_sections(sections: list[Section]) -> list[Chunk]:
+    """Pack a page's sections into chunks, in reading order (see the module docstring for rules)."""
     chunks: list[Chunk] = []
     lines: list[str] = []          # the chunk being built
     first_heading = ""
     last_heading: str | None = None
 
     def emit() -> None:
+        """Close the chunk being built (if it has any text) and add it to `chunks`."""
         content = "\n".join(lines).strip()
         if content:
             chunks.append(Chunk(len(chunks), first_heading, content))

@@ -19,6 +19,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 
 def seed(conn: psycopg.Connection, tenant: TenantSeed) -> None:
+    """Insert or update the tenant and its site key in one transaction."""
     with conn.transaction():
         tenant_id = conn.execute(
             "INSERT INTO tenants (slug, name, config, limits) VALUES (%s, %s, %s, %s) "
@@ -41,6 +42,7 @@ def seed(conn: psycopg.Connection, tenant: TenantSeed) -> None:
 
 
 def main() -> None:
+    """CLI entry point: load the seed file and apply it as the schema owner."""
     if len(sys.argv) != 2:
         sys.exit("usage: python seed_tenant.py <seed.json>")
     tenant = TenantSeed.model_validate_json(Path(sys.argv[1]).read_text(encoding="utf-8"))

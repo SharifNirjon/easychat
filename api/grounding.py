@@ -14,7 +14,7 @@ gets the tenant's fallback blocks instead of sources.
 import re
 from urllib.parse import urlsplit
 
-from blocks import AssetPolicy
+from blocks import LOCAL_HOSTS, AssetPolicy
 from models import Fallback
 from retrieval import Hit
 
@@ -34,6 +34,7 @@ def _defuse(text: str) -> str:
 
 
 def knowledge_block(hits: list[Hit]) -> str:
+    """The retrieved chunks as one fenced <knowledge> section for the system prompt."""
     if not hits:
         # Said plainly: weaker models otherwise fill the gap from general knowledge.
         return ("<knowledge>\n(nothing relevant was found for this question: unless it is small talk, "
@@ -49,6 +50,7 @@ class MarkerFilter:
     """Strips NO_ANSWER_MARKER from streamed text, even when it arrives split across chunks."""
 
     def __init__(self, marker: str = NO_ANSWER_MARKER):
+        """Start with nothing held back and the marker not yet seen."""
         self.marker = marker
         self.found = False
         self._buffer = ""
@@ -76,11 +78,13 @@ class MarkerFilter:
 # --- Blocks -------------------------------------------------------------------------------------
 
 def _cut(text: str, limit: int) -> str:
+    """Collapse whitespace and shorten to `limit` characters, ending with an ellipsis if cut."""
     text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
 def _price(price: str | None, currency: str | None) -> str | None:
+    """'12' + 'USD' -> '$12' (or '12 XYZ' for unknown currencies); None if too long for a card."""
     if not price:
         return None
     symbol = CURRENCY_SYMBOLS.get((currency or "").upper())
@@ -94,11 +98,12 @@ def _allowed_image(url: str | None, policy: AssetPolicy) -> str | None:
     if not url:
         return None
     parts = urlsplit(url)
-    secure = parts.scheme == "https" or (policy.allow_local_http and parts.hostname in ("localhost", "127.0.0.1"))
+    secure = parts.scheme == "https" or (policy.allow_local_http and parts.hostname in LOCAL_HOSTS)
     return url if secure and parts.netloc.lower() in policy.image_hosts else None
 
 
 def product_card(row: dict, policy: AssetPolicy) -> dict:
+    """A product row from the database -> a card dict for the card/carousel blocks."""
     card: dict = {
         "title": _cut(row["name"], 120),
         "action": {"kind": "send", "text": _cut(f"Tell me more about {row['name']}", 200)},
@@ -121,6 +126,7 @@ def product_card(row: dict, policy: AssetPolicy) -> dict:
 
 
 def product_blocks(rows: list[dict], policy: AssetPolicy) -> list[dict]:
+    """One product -> a card block; several -> a carousel; none -> nothing."""
     cards = [product_card(row, policy) for row in rows[:MAX_PRODUCT_CARDS]]
     if not cards:
         return []
@@ -143,6 +149,7 @@ def sources_block(hits: list[Hit]) -> list[dict]:
 
 
 def fallback_blocks(fallback: Fallback | None) -> list[dict]:
+    """The tenant's 'I don't know' blocks: a notice, plus contact/handoff chips if set."""
     if fallback is None:
         return []
     blocks: list[dict] = [{"type": "notice", "tone": "info", "text": fallback.text}]

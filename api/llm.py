@@ -57,6 +57,7 @@ class Usage:
 
     @property
     def total(self) -> int:
+        """Tokens in + out: what the tenant's daily budget is charged."""
         return self.tokens_in + self.tokens_out
 
 

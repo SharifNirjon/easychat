@@ -7,6 +7,10 @@ import { actionControl, image, ratingLine } from './shared';
 type CardBlock = Extract<Block, { type: 'card' }>;
 type CarouselBlock = Extract<Block, { type: 'carousel' }>;
 
+/** Space between carousel cards; must match `.ec-carousel { gap }` in styles.css. */
+const CAROUSEL_GAP_PX = 10;
+
+/** One card: optional image (badge on top), title, subtitle, rating, price and action button. */
 function renderCard(card: Card, onAction: ActionHandler): HTMLElement {
   const media = image(card.image, 'ec-card-img');
   const badge = card.badge ? el('span', { class: 'ec-card-badge' }, [card.badge]) : null;
@@ -33,6 +37,7 @@ function renderCard(card: Card, onAction: ActionHandler): HTMLElement {
   ]);
 }
 
+/** A single card on its own. */
 export function renderCardBlock(block: CardBlock, onAction: ActionHandler): HTMLElement {
   return el('div', { class: 'ec-card-single' }, [renderCard(block.card, onAction)]);
 }
@@ -47,9 +52,10 @@ export function renderCarousel(block: CarouselBlock, onAction: ActionHandler): H
   const dots = block.items.map(() => el('i'));
   const counter = el('span', { class: 'ec-carousel-count' });
 
+  /** Highlight the dot and update 'n of N' for the card nearest the scroll position. */
   const update = () => {
     const slide = track.firstElementChild as HTMLElement | null;
-    const step = slide ? slide.offsetWidth + 10 : 1; // 10px = gap in styles.css
+    const step = slide ? slide.offsetWidth + CAROUSEL_GAP_PX : 1;
     const index = Math.min(block.items.length - 1, Math.round(track.scrollLeft / step));
     dots.forEach((dot, i) => dot.classList.toggle('is-active', i === index));
     counter.textContent = `${index + 1} of ${block.items.length} · swipe`;

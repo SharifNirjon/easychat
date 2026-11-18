@@ -23,6 +23,7 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def env(name: str) -> str:
+    """Read a required env var or exit with a clear message."""
     value = os.getenv(name, "").strip()
     if not value:
         sys.exit(f"Missing required env var {name} (see api/.env.example)")
@@ -30,6 +31,7 @@ def env(name: str) -> str:
 
 
 def apply_migrations(conn: psycopg.Connection) -> list[str]:
+    """Apply every not-yet-applied .sql file in order, each in its own transaction."""
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations "
         "(version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
@@ -63,6 +65,7 @@ def ensure_dev_app_role(conn: psycopg.Connection, database_url: str) -> None:
 
 
 def main() -> None:
+    """Apply migrations as the owner; locally, also create the API's login role."""
     with psycopg.connect(env("MIGRATION_DATABASE_URL"), autocommit=True) as conn:
         done = apply_migrations(conn)
         print(f"migrations applied: {', '.join(done) if done else 'none (up to date)'}")

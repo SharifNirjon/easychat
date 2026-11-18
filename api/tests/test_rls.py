@@ -5,11 +5,13 @@ from conftest import APP_URL, KEY_A, KEY_B
 
 
 def tenant_ids(owner_db) -> dict[str, str]:
+    """{slug: tenant id as text} for the seeded test tenants."""
     return {slug: str(tid) for slug, tid in owner_db.execute("SELECT slug, id FROM tenants")}
 
 
 @pytest.fixture
 def two_conversations(owner_db):
+    """One conversation with one private message per tenant, inserted as owner."""
     ids = tenant_ids(owner_db)
     out = {}
     for slug, key in (("tenant-a", KEY_A), ("tenant-b", KEY_B)):
@@ -28,15 +30,18 @@ def two_conversations(owner_db):
 
 @pytest.fixture
 def app_db():
+    """A connection as the API's own role (not owner, not superuser)."""
     with psycopg.connect(APP_URL) as conn:   # the API's role: not owner, not superuser
         yield conn
 
 
 def as_tenant(conn, tenant_id):
+    """Scope the current transaction to one tenant, as db.tenant_tx does."""
     conn.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
 
 
 def test_api_role_cannot_bypass_rls(app_db):
+    """The API's role is neither superuser nor table owner."""
     row = app_db.execute(
         "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user").fetchone()
     assert row == (False, False)
@@ -46,11 +51,13 @@ def test_api_role_cannot_bypass_rls(app_db):
 
 
 def test_no_tenant_set_sees_nothing(app_db, two_conversations):
+    """With no tenant set, every table looks empty (fail closed)."""
     for table in ("tenants", "site_keys", "conversations", "messages"):
         assert app_db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
 
 
 def test_tenant_sees_only_its_own_rows(app_db, owner_db, two_conversations):
+    """A tenant sees its own rows only, even when asking by id."""
     ids = tenant_ids(owner_db)
     as_tenant(app_db, ids["tenant-a"])
     contents = [r[0] for r in app_db.execute("SELECT content FROM messages")]
@@ -63,6 +70,7 @@ def test_tenant_sees_only_its_own_rows(app_db, owner_db, two_conversations):
 
 
 def test_tenant_cannot_write_rows_for_another_tenant(app_db, owner_db, two_conversations):
+    """Inserting rows for another tenant is refused."""
     ids = tenant_ids(owner_db)
     as_tenant(app_db, ids["tenant-a"])
     with pytest.raises(psycopg.errors.InsufficientPrivilege):   # WITH CHECK violation
@@ -73,6 +81,7 @@ def test_tenant_cannot_write_rows_for_another_tenant(app_db, owner_db, two_conve
 
 
 def test_tenant_cannot_update_another_tenants_rows(app_db, owner_db, two_conversations):
+    """Updates silently match nothing across tenants."""
     ids = tenant_ids(owner_db)
     as_tenant(app_db, ids["tenant-a"])
     cur = app_db.execute("UPDATE conversations SET user_turns = 99 WHERE id = %s", (two_conversations["tenant-b"],))
@@ -80,12 +89,14 @@ def test_tenant_cannot_update_another_tenants_rows(app_db, owner_db, two_convers
 
 
 def test_api_role_cannot_delete_or_change_tenants(app_db, owner_db):
+    """The API's role has no DELETE on messages."""
     as_tenant(app_db, tenant_ids(owner_db)["tenant-a"])
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         app_db.execute("DELETE FROM messages")
 
 
 def test_message_cannot_point_at_another_tenants_conversation(owner_db, two_conversations):
+    """The composite FK blocks cross-tenant links, even for the owner."""
     ids = tenant_ids(owner_db)
     with pytest.raises(psycopg.errors.ForeignKeyViolation):   # composite FK, even for the owner
         owner_db.execute(
@@ -95,6 +106,7 @@ def test_message_cannot_point_at_another_tenants_conversation(owner_db, two_conv
 
 
 def test_resolve_site_key_ignores_revoked_keys(app_db, owner_db):
+    """A revoked site key stops resolving at once."""
     assert app_db.execute("SELECT slug FROM resolve_site_key(%s)", (KEY_A,)).fetchone() == ("tenant-a",)
     owner_db.execute("UPDATE site_keys SET revoked_at = now() WHERE public_key = %s", (KEY_A,))
     try:

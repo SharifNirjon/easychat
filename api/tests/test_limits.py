@@ -13,7 +13,9 @@ import main
 
 @pytest.fixture
 def ip_limit(monkeypatch):
+    """Returns a function that sets the per-IP limit (and trusted proxy hops) for one test."""
     def set_limit(n: int, hops: int = 0):
+        """Apply the limit to both modules that read it."""
         patched = dataclasses.replace(limits.settings, ip_messages_per_minute=n, trusted_proxy_hops=hops)
         monkeypatch.setattr(limits, "settings", patched)
         monkeypatch.setattr(main, "settings", patched)
@@ -21,6 +23,7 @@ def ip_limit(monkeypatch):
 
 
 async def test_ip_flood_gets_429_before_any_model_call(client, fake_llm, ip_limit):
+    """A flood is cut off before it costs a model call."""
     ip_limit(3)
     statuses = [(await send(client, f"m{i}")).status_code for i in range(5)]
     assert statuses == [200, 200, 200, 429, 429]
@@ -28,6 +31,7 @@ async def test_ip_flood_gets_429_before_any_model_call(client, fake_llm, ip_limi
 
 
 async def test_429_has_retry_after_and_safe_message(client, ip_limit):
+    """429s say when to retry, in words fit for a visitor."""
     ip_limit(1)
     await send(client)
     r = await send(client)
@@ -37,6 +41,7 @@ async def test_429_has_retry_after_and_safe_message(client, ip_limit):
 
 
 async def test_forged_forwarded_for_is_ignored_without_trusted_proxies(client, ip_limit):
+    """A forged X-Forwarded-For can't reset the limit."""
     ip_limit(2)
     statuses = []
     for i in range(4):   # a new fake X-Forwarded-For each time must not reset the counter
@@ -47,6 +52,7 @@ async def test_forged_forwarded_for_is_ignored_without_trusted_proxies(client, i
 
 
 async def test_trusted_proxy_hop_uses_rightmost_entry(client, ip_limit):
+    """Behind a proxy, only the proxy-appended address counts."""
     ip_limit(1, hops=1)
     hdrs = {"Origin": "https://shop-a.example"}
     body = {"site_key": "pk_test_tenant_a", "message": "hi"}
@@ -58,6 +64,7 @@ async def test_trusted_proxy_hop_uses_rightmost_entry(client, ip_limit):
 
 
 async def test_daily_token_budget(client, fake_llm, owner_db):
+    """Tokens are counted per tenant and day; an exhausted budget is a 429."""
     tenant_id = owner_db.execute("SELECT id FROM tenants WHERE slug = 'tenant-a'").fetchone()[0]
     r = await send(client)
     assert r.status_code == 200
@@ -74,12 +81,14 @@ async def test_daily_token_budget(client, fake_llm, owner_db):
 
 
 async def test_monthly_conversation_cap(client):
+    """New conversations stop at the tenant's monthly cap."""
     # tenant-b allows 2 new conversations per month
     statuses = [(await send(client, key=KEY_B, origin=ORIGIN_B)).status_code for _ in range(3)]
     assert statuses == [200, 200, 429]
 
 
 async def test_conversation_turn_cap(client, ip_limit):
+    """One conversation stops at the tenant's turn cap."""
     # tenant-b allows 2 visitor turns per conversation
     cid = parse_sse((await send(client, "1", key=KEY_B, origin=ORIGIN_B)).text)[0][1]["conversation_id"]
     assert (await send(client, "2", conversation_id=cid, key=KEY_B, origin=ORIGIN_B)).status_code == 200
@@ -89,7 +98,9 @@ async def test_conversation_turn_cap(client, ip_limit):
 
 
 async def test_redis_down_fails_closed(client, monkeypatch, fake_llm):
+    """If Redis is down, nothing is answered: no unmetered bill."""
     async def broken(*_args, **_kwargs):
+        """Stand-in Redis call that always fails."""
         raise redis.asyncio.ConnectionError("down")
     monkeypatch.setattr(limits.client, "get", broken)
     monkeypatch.setattr(limits.client, "pipeline", lambda **_: (_ for _ in ()).throw(redis.asyncio.ConnectionError()))

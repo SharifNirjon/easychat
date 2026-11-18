@@ -60,12 +60,14 @@ function createShadowHost(): ShadowRoot {
   return shadow;
 }
 
+/** Fetch the tenant config, load fonts, and mount the widget in its Shadow DOM. */
 async function boot(siteKey: string, scriptSrc: string): Promise<void> {
   const config = await fetchConfig(siteKey);
   loadFonts(scriptSrc);
   new Widget(siteKey, config, createShadowHost());
 }
 
+/** Find our own <script> tag and its site key, then boot once the page has parsed. */
 function start(): void {
   const flag = window as Window & { __easychatLoaded?: boolean };
   if (flag.__easychatLoaded) return; // script tag included twice
@@ -77,6 +79,7 @@ function start(): void {
     return;
   }
   const scriptSrc = ownScript.src;
+  /** Boot, turning any failure into a console warning: the host page must never break. */
   const run = () => boot(siteKey, scriptSrc).catch((err) => console.warn('easychat: widget disabled —', err));
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once: true });
   else void run();

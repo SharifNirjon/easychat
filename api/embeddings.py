@@ -26,10 +26,11 @@ _client = AsyncOpenAI(
 
 
 class EmbeddingError(RuntimeError):
-    pass
+    """The embedding service failed or returned something unusable."""
 
 
 def _extra_body() -> dict:
+    """OpenRouter provider preferences: zero data retention in strict privacy mode."""
     return {"provider": STRICT_PROVIDER_PREFS} if settings.privacy_mode == "strict" else {}
 
 

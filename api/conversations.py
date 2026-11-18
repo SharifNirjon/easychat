@@ -16,6 +16,7 @@ HISTORY_MESSAGES = 10
 
 @dataclass(frozen=True)
 class Turn:
+    """What the reply needs: the conversation id and the recent history to answer."""
     conversation_id: UUID
     history: list[dict]     # [{"role": ..., "content": ...}] oldest first, ends with a user message
 

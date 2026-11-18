@@ -15,6 +15,7 @@ const RESUME_ERROR = "Your last message didn't get a reply.";
 /** Theme keys the tenant may set (api/models.py Theme); each becomes a --ec-<key> CSS variable. */
 const THEME_TOKENS = ['primary', 'accent', 'surface', 'text'];
 
+/** One widget instance: owns the conversation state and wires launcher, teaser and panel together. */
 export class Widget {
   private readonly root: HTMLElement;
   private readonly launcher: Launcher;
@@ -49,6 +50,7 @@ export class Widget {
     else this.scheduleTeaser();
   }
 
+  /** Open the panel (hides the teaser); `focus: false` when restoring an open panel on page load. */
   open({ focus = true } = {}): void {
     this.hideTeaser();
     this.setOpen(true);
@@ -58,6 +60,7 @@ export class Widget {
     if (focus) this.panel.focusInput();
   }
 
+  /** Close the panel, returning focus to the launcher only if it was inside the widget. */
   close(): void {
     // Only move focus back to the launcher if it was inside the widget (don't yank it from the page).
     const focusWasInside = this.shadow.activeElement !== null;
@@ -65,6 +68,7 @@ export class Widget {
     if (focusWasInside) this.launcher.element.focus();
   }
 
+  /** Apply the open/closed state everywhere it shows (panel, launcher, attribute) and save it. */
   private setOpen(open: boolean): void {
     this.state.open = open;
     this.panel.element.hidden = !open;
@@ -83,6 +87,7 @@ export class Widget {
     if (href) window.open(href, '_blank', 'noopener,noreferrer');
   }
 
+  /** Show the visitor's message, remember it as not yet stored, and request a reply. */
   private send(text: string): void {
     this.state.unsent = text;
     this.remember({ role: 'user', content: text });
@@ -148,6 +153,7 @@ export class Widget {
     this.panel.setBusy(false);
   }
 
+  /** If the server lost the conversation, make Retry start a new one with the last question. */
   private handleFailure(kind: FailureKind): void {
     if (kind !== 'conversation-gone') return;
     // The server no longer has this chat: Retry starts a new one with the last question.
@@ -157,12 +163,14 @@ export class Widget {
     this.persist();
   }
 
+  /** Show an error row with a Retry button, and announce it to screen readers. */
   private showRetry(message: string): void {
     this.panel.messages.showError(message, () => void this.requestReply());
     this.panel.announce(message);
     this.panel.scrollToBottom();
   }
 
+  /** Re-render this tab's saved conversation; offer Retry if it ended on an unanswered message. */
   private restoreConversation(): void {
     const { messages } = this.state;
     this.panel.messages.render(messages);
@@ -171,6 +179,7 @@ export class Widget {
     if (messages.length > 0 && messages[messages.length - 1].role === 'user') this.showRetry(RESUME_ERROR);
   }
 
+  /** Show the proactive teaser once per tab session, after TEASER_DELAY_MS, if the chat is still closed. */
   private scheduleTeaser(): void {
     if (this.state.teaserSeen || !this.config.teaser) return;
     window.setTimeout(() => {
@@ -186,6 +195,7 @@ export class Widget {
     }, TEASER_DELAY_MS);
   }
 
+  /** Remove the teaser and the launcher's attention badge. */
   private hideTeaser(): void {
     this.teaser?.remove();
     this.teaser = null;
@@ -194,6 +204,7 @@ export class Widget {
 
   /** The tenant's seed colours; styles.css derives tints, borders and muted text from them. */
   private applyTheme(): void {
+    /** Only plain #rrggbb values reach CSS: anything else could inject styles. */
     const isHex = (value: unknown) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
     for (const [name, value] of Object.entries(this.config.theme ?? {})) {
       if (THEME_TOKENS.includes(name) && isHex(value)) this.root.style.setProperty(`--ec-${name}`, value);
@@ -206,6 +217,7 @@ export class Widget {
     this.persist();
   }
 
+  /** Save this tab's state to sessionStorage. */
   private persist(): void {
     saveState(this.siteKey, this.state);
   }

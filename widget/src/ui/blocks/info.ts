@@ -15,6 +15,7 @@ function shortUrl(raw: string): string {
   return `${url.host}${url.pathname}`.replace(/\/$/, '');
 }
 
+/** 'Sources': each page an answer came from, as a link with its title and short URL. */
 export function renderSources(block: SourcesBlock, onAction: ActionHandler): HTMLElement {
   return el('section', { class: 'ec-sources' }, [
     groupLabel('Sources'),
@@ -30,6 +31,7 @@ export function renderSources(block: SourcesBlock, onAction: ActionHandler): HTM
   ]);
 }
 
+/** A short coloured note with an info icon (tone: info, success, warning, danger). */
 export function renderNotice(block: NoticeBlock): HTMLElement {
   return el('p', { class: `ec-notice ec-tone--${block.tone ?? 'info'}`, role: 'note' }, [icon('info', 18), el('span', {}, [block.text])]);
 }

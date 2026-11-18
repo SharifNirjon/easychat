@@ -47,6 +47,7 @@ class CrawlError(RuntimeError):
 
 @dataclass
 class CrawlStats:
+    """Counters for one crawl run; also saved to crawl_jobs for progress screens."""
     pages_found: int = 0
     pages_indexed: int = 0
     pages_unchanged: int = 0
@@ -63,6 +64,7 @@ Progress = Callable[[str, str], None]    # (outcome, url) -> None, e.g. for prin
 # --- Discovery ----------------------------------------------------------------------------------
 
 def _is_page_url(url: str) -> bool:
+    """False for URLs that obviously aren't web pages (images, PDFs, scripts...)."""
     return PurePosixPath(urlsplit(url).path).suffix.lower() not in NON_PAGE_EXTENSIONS
 
 
@@ -71,6 +73,7 @@ async def discover(fetcher: Fetcher, knowledge: KnowledgeConfig) -> list[str]:
     found: dict[str, None] = {}
 
     def add(url: str) -> None:
+        """Keep a URL if it is safe and on this crawl's sites; first occurrence wins."""
         try:
             clean = check_url(url, fetcher.allowed_hosts, fetcher.allow_local)
         except FetchError:
@@ -105,6 +108,7 @@ async def discover(fetcher: Fetcher, knowledge: KnowledgeConfig) -> list[str]:
 # --- Storage ------------------------------------------------------------------------------------
 
 async def _start_job(tenant_id: UUID) -> UUID:
+    """Create the crawl_jobs row that tracks this run; return its id."""
     async with db.tenant_tx(tenant_id) as conn:
         cur = await conn.execute("INSERT INTO crawl_jobs (tenant_id) VALUES (%s) RETURNING id", (tenant_id,))
         return (await cur.fetchone())["id"]
@@ -112,6 +116,7 @@ async def _start_job(tenant_id: UUID) -> UUID:
 
 async def _save_progress(tenant_id: UUID, job_id: UUID, stats: CrawlStats, status: str | None = None,
                          error: str | None = None) -> None:
+    """Write the current counters (and, at the end, the final status) to the job row."""
     fields = asdict(stats)
     assignments = ", ".join(f"{name} = %({name})s" for name in fields)
     if status:
@@ -122,6 +127,7 @@ async def _save_progress(tenant_id: UUID, job_id: UUID, stats: CrawlStats, statu
 
 
 async def _existing_hash(tenant_id: UUID, url: str) -> str | None:
+    """Content hash stored for this URL by an earlier crawl, or None if it is new."""
     async with db.tenant_tx(tenant_id) as conn:
         cur = await conn.execute("SELECT content_hash FROM kb_pages WHERE url = %s", (url,))
         row = await cur.fetchone()
@@ -129,6 +135,7 @@ async def _existing_hash(tenant_id: UUID, url: str) -> str | None:
 
 
 async def _mark_seen(tenant_id: UUID, job_id: UUID, url: str) -> None:
+    """Record that this crawl saw the page, so the end-of-crawl cleanup keeps it."""
     async with db.tenant_tx(tenant_id) as conn:
         await conn.execute("UPDATE kb_pages SET last_job_id = %s WHERE url = %s", (job_id, url))
 
@@ -187,6 +194,7 @@ async def _replace_page(tenant_id: UUID, job_id: UUID, url: str, title: str, kin
 
 
 async def _remove_unseen(tenant_id: UUID, job_id: UUID) -> int:
+    """Delete pages this crawl didn't see (their chunks/products cascade); return how many."""
     async with db.tenant_tx(tenant_id) as conn:
         cur = await conn.execute("DELETE FROM kb_pages WHERE last_job_id IS DISTINCT FROM %s", (job_id,))
         return cur.rowcount
@@ -195,6 +203,7 @@ async def _remove_unseen(tenant_id: UUID, job_id: UUID) -> int:
 # --- One page -----------------------------------------------------------------------------------
 
 def _content_hash(page: Page, kind: str, products: list[Product]) -> str:
+    """Fingerprint of everything indexed from a page: unchanged hash = nothing to redo."""
     payload = json.dumps([page.title, kind, [(s.heading, s.text) for s in page.sections],
                           [asdict(p) for p in products]], sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
@@ -241,7 +250,7 @@ async def crawl_page(fetcher: Fetcher, tenant_id: UUID, job_id: UUID, url: str, 
         try:
             key = check_url(page.canonical, fetcher.allowed_hosts, fetcher.allow_local)
         except FetchError:
-            pass
+            pass                                     # off-site canonical: keep the fetched URL
     if key in indexed:
         stats.pages_skipped += 1
         return "skipped: duplicate", page

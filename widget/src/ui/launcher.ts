@@ -4,6 +4,7 @@ import { icon } from '../icons';
 import type { WidgetConfig } from '../types';
 import { avatar } from './messages';
 
+/** The round button that opens and closes the chat. */
 export class Launcher {
   readonly element: HTMLButtonElement;
 
@@ -24,6 +25,7 @@ export class Launcher {
     this.element.replaceChildren(icon(open ? 'close' : 'chat', 22));
   }
 
+  /** Show or hide the small attention dot (used while the teaser is visible). */
   setBadge(visible: boolean): void {
     this.element.classList.toggle('ec-launcher--badge', visible);
   }
@@ -34,6 +36,7 @@ export interface TeaserHandlers {
   onDismiss(): void;
 }
 
+/** The one-time teaser bubble: tapping it opens the chat; its X dismisses it. */
 export function createTeaser(config: WidgetConfig, handlers: TeaserHandlers): HTMLElement {
   const body = el('button', { type: 'button', class: 'ec-teaser-body' }, [
     avatar(config.bot_name),

@@ -1,11 +1,12 @@
 /** Chips (quick replies) and button rows. */
-import type { ActionHandler, Block } from '../../types';
 import { el } from '../../dom';
+import type { ActionHandler, Block } from '../../types';
 import { actionControl } from './shared';
 
 type ChipsBlock = Extract<Block, { type: 'chips' }>;
 type ButtonsBlock = Extract<Block, { type: 'buttons' }>;
 
+/** A row of quick-reply chips; each one sends a message or opens a link. */
 export function renderChips(block: ChipsBlock, onAction: ActionHandler): HTMLElement {
   return el(
     'div',
@@ -14,6 +15,7 @@ export function renderChips(block: ChipsBlock, onAction: ActionHandler): HTMLEle
   );
 }
 
+/** One to three buttons; `primary` is filled, `secondary` outlined. */
 export function renderButtons(block: ButtonsBlock, onAction: ActionHandler): HTMLElement {
   return el(
     'div',

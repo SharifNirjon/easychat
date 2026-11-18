@@ -38,10 +38,12 @@ def tenant_by_slug(slug: str) -> tuple[UUID, TenantConfig]:
 
 
 def print_progress(outcome: str, url: str) -> None:
+    """Print one line per crawled page: its outcome and URL."""
     print(f"  {outcome:<45} {url}", flush=True)
 
 
 async def crawl(slug: str) -> None:
+    """Crawl one tenant's site end to end and print a summary of what changed."""
     tenant_id, config = tenant_by_slug(slug)
     if config.knowledge is None:
         sys.exit(f"tenant {slug!r} has no `knowledge` config: add sitemaps/start_urls to its seed file")
@@ -61,6 +63,7 @@ async def crawl(slug: str) -> None:
 
 
 def main() -> None:
+    """CLI entry point: validate arguments and run crawl() on a psycopg-compatible event loop."""
     if len(sys.argv) != 2:
         sys.exit("usage: python crawl.py <tenant-slug>")
     # SelectorEventLoop: psycopg's async driver can't use Windows' default loop (see serve_local.py).

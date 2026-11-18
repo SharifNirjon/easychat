@@ -17,6 +17,7 @@ __all__ = ["SITE_KEY_PATTERN", "Tenant", "resolve_tenant"]
 
 @dataclass(frozen=True)
 class Tenant:
+    """The tenant a request belongs to, resolved from its site key and Origin."""
     id: UUID
     site_key_id: UUID
     slug: str

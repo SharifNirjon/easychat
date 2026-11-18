@@ -12,6 +12,7 @@ const STATE_LABEL: Record<TimelineStep['state'], string> = {
   upcoming: 'not yet',
 };
 
+/** One timeline step: marker (a tick when done), label, and its state for screen readers. */
 function step(item: TimelineStep): HTMLElement {
   return el('li', { class: `ec-tl-step is-${item.state}` }, [
     el('span', { class: 'ec-tl-marker', 'aria-hidden': 'true' }, item.state === 'done' ? [icon('check', 12)] : []),
@@ -22,6 +23,7 @@ function step(item: TimelineStep): HTMLElement {
   ]);
 }
 
+/** A progress timeline (order tracking): eyebrow, status pill, title, steps, footer link. */
 export function renderTimeline(block: TimelineBlock, onAction: ActionHandler): HTMLElement {
   const head: HTMLElement[] = [];
   if (block.eyebrow || block.status) {

@@ -41,12 +41,14 @@ _SPACES = re.compile(r"[ \t\r\f\v ]+")
 
 @dataclass
 class Section:
+    """A run of page text under one heading path."""
     heading: str            # "About › Our team" (h1-h3 path); "" before the first heading
     text: str
 
 
 @dataclass
 class Page:
+    """Everything extracted from one HTML page."""
     title: str = ""
     description: str = ""
     canonical: str | None = None
@@ -57,11 +59,14 @@ class Page:
 
     @property
     def text_chars(self) -> int:
+        """Total characters of extracted text (for size checks)."""
         return sum(len(s.text) for s in self.sections)
 
 
 class _PageParser(HTMLParser):
+    """Streaming HTML parser that collects title, headings, text, links and JSON-LD."""
     def __init__(self, base_url: str):
+        """Start an empty page; `base_url` resolves relative links and canonicals."""
         super().__init__(convert_charrefs=True)
         self.base_url = base_url
         self.page = Page()
@@ -81,6 +86,7 @@ class _PageParser(HTMLParser):
 
     # -- tags --
     def handle_starttag(self, tag, attrs):
+        """Track where we are (skipped, chrome, main, heading) and react to tags."""
         attr = {k.lower(): (v or "") for k, v in attrs}
         if tag == "script" and attr.get("type", "").lower() == "application/ld+json":
             self._ld_parts = []
@@ -109,11 +115,13 @@ class _PageParser(HTMLParser):
             self._add(" | ")
 
     def handle_startendtag(self, tag, attrs):
+        """Self-closing tags (<br/>): handle as a start tag, then an end tag."""
         self.handle_starttag(tag, attrs)
         if tag not in _VOID_TAGS:
             self.handle_endtag(tag)
 
     def handle_endtag(self, tag):
+        """Leave the region the tag opened; block tags end the current line."""
         if tag in _VOID_TAGS:
             return
         if tag == "script" and self._ld_parts is not None:
@@ -136,6 +144,7 @@ class _PageParser(HTMLParser):
             self._text(" ")
 
     def handle_data(self, data):
+        """Text between tags: JSON-LD is collected raw, everything else as text."""
         if self._ld_parts is not None:
             self._ld_parts.append(data)
             return
@@ -158,9 +167,11 @@ class _PageParser(HTMLParser):
     # -- helpers --
     @property
     def _hidden(self) -> bool:
+        """True inside skipped tags (scripts, forms...) or site chrome (nav, footer...)."""
         return bool(self._skip_depth or self._chrome_depth)
 
     def _void(self, tag: str, attr: dict[str, str]) -> None:
+        """Handle tags with no content: <br>, <meta> robots/description, <link rel=canonical>."""
         if tag == "br":
             if self._heading_level or self._in_title:
                 self._text(" ")             # "Intelligence, engineered<br>to the summit"
@@ -176,6 +187,7 @@ class _PageParser(HTMLParser):
             self.page.canonical = urljoin(self.base_url, attr["href"].strip())
 
     def _link(self, href: str) -> None:
+        """Collect an absolute http(s) link (fragment dropped) for link-following crawls."""
         if len(self.page.links) >= MAX_LINKS_PER_PAGE:
             return
         url = urljoin(self.base_url, href.strip())
@@ -192,6 +204,7 @@ class _PageParser(HTMLParser):
             self._add(f" {label}: {value} ")
 
     def _json_ld(self, raw: str) -> None:
+        """Parse one JSON-LD script; malformed or oversized ones are ignored."""
         if len(self.page.json_ld) >= MAX_JSON_LD_BLOCKS or len(raw) > MAX_JSON_LD_CHARS:
             return
         try:
@@ -200,6 +213,7 @@ class _PageParser(HTMLParser):
             pass   # malformed JSON-LD is common on the web: ignore it
 
     def _close_heading(self) -> None:
+        """Finish an h1-h3: it becomes the current heading path for following text."""
         text = _clean("".join(self._heading_parts))[:MAX_HEADING_CHARS]
         level = self._heading_level
         self._heading_level = 0
@@ -211,6 +225,7 @@ class _PageParser(HTMLParser):
         self._add("\n")
 
     def _add(self, text: str) -> None:
+        """Append body text under the current heading path (dropped if hidden or over the cap)."""
         if self._hidden or self._text_chars > MAX_PAGE_TEXT_CHARS:
             return
         heading = " › ".join(h for _, h in self._path[-HEADING_PATH_LEVELS:])
@@ -218,6 +233,7 @@ class _PageParser(HTMLParser):
         self._text_chars += len(text)
 
     def finish(self) -> Page:
+        """Assemble sections (only <main> text when the page has one) and return the page."""
         self.close()
         self.page.title = _clean("".join(self._title_parts))[:MAX_TITLE_CHARS]
         pieces = [(h, t) for in_main, h, t in self._pieces if in_main or not self._saw_main]
@@ -234,6 +250,7 @@ class _PageParser(HTMLParser):
 
 
 def _clean(text: str) -> str:
+    """Collapse runs of whitespace into single spaces and trim."""
     return _SPACES.sub(" ", text).strip()
 
 
@@ -244,6 +261,7 @@ def _normalise_block(text: str) -> str:
 
 
 def parse_html(html: str, base_url: str) -> Page:
+    """Extract a Page from raw HTML; `base_url` is the page's own (final) URL."""
     parser = _PageParser(base_url)
     parser.feed(html)
     return parser.finish()
@@ -252,7 +270,7 @@ def parse_html(html: str, base_url: str) -> Page:
 # --- Sitemaps ---------------------------------------------------------------------------------
 
 class SitemapError(ValueError):
-    pass
+    """The sitemap could not be used (invalid XML, a DTD, or not a sitemap at all)."""
 
 
 def parse_sitemap(xml: bytes) -> tuple[list[str], list[str]]:

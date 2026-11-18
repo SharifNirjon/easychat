@@ -35,10 +35,12 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS;
 
+/** True if `name` is one of the icons bundled here (tenant config may name others). */
 export function isIconName(name: string): name is IconName {
   return Object.prototype.hasOwnProperty.call(PATHS, name);
 }
 
+/** A decorative inline SVG icon (hidden from screen readers), drawn in the current text colour. */
 export function icon(name: IconName, size = 18, { filled = false } = {}): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
   const attrs: Record<string, string> = {

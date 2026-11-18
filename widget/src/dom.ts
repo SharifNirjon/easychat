@@ -6,6 +6,7 @@
 type Attrs = Record<string, string | boolean | undefined>;
 type Child = Node | string;
 
+/** Create an element with attributes and children. Strings become text nodes, never HTML. */
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: Attrs = {},

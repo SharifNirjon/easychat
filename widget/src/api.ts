@@ -6,6 +6,7 @@ const NETWORK_ERROR = "I couldn't reach the server. Check your connection and tr
 const INTERRUPTED_ERROR = 'The reply was interrupted. Please try again.';
 const UNAVAILABLE_ERROR = 'The assistant is unavailable right now. Please try again.';
 
+/** The tenant's public widget config for this site key; throws on any non-2xx. */
 export async function fetchConfig(siteKey: string): Promise<WidgetConfig> {
   const res = await fetch(`${API_BASE}/config?key=${encodeURIComponent(siteKey)}`);
   if (!res.ok) throw new Error(`easychat: config request failed (${res.status})`);

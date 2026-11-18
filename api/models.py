@@ -7,7 +7,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field, HttpUrl, field_validator, model_validator
 
-from blocks import Icon
+from blocks import LOCAL_HOSTS, Icon
 
 SITE_KEY_PATTERN = r"^pk_[A-Za-z0-9_]{8,64}$"
 SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{1,62}$"
@@ -20,10 +20,12 @@ SERVER_ONLY_FIELDS = frozenset({"image_hosts", "knowledge", "fallback"})
 
 
 def normalize_origin(origin: str) -> str:
+    """Canonical form for comparing origins: trimmed, lowercase, no trailing slash."""
     return origin.strip().rstrip("/").lower()
 
 
 class Greeting(BaseModel):
+    """The home screen's greeting text."""
     title: str = Field(max_length=80)
     headline: str = Field(max_length=120)   # words wrapped in *asterisks* render in the accent serif font
     subtitle: str = Field(max_length=300)
@@ -38,6 +40,7 @@ class Theme(BaseModel):
 
 
 def _https_only(url: HttpUrl) -> HttpUrl:
+    """Reject non-https URLs (e.g. plain http) in tenant config."""
     if url.scheme != "https":
         raise ValueError("must be an https URL")
     return url
@@ -56,6 +59,7 @@ class HomeAction(BaseModel):
 
     @model_validator(mode="after")
     def exactly_one_target(self) -> "HomeAction":
+        """A tile must either send a message or open a URL, not both or neither."""
         if (self.message is None) == (self.url is None):
             raise ValueError("give exactly one of message or url")
         return self
@@ -71,6 +75,7 @@ class Home(BaseModel):
     @field_validator("chips")
     @classmethod
     def chips_are_short(cls, chips: list[str]) -> list[str]:
+        """Every home chip must be 1-60 characters."""
         if any(not 1 <= len(chip) <= 60 for chip in chips):
             raise ValueError("each chip must be 1-60 characters")
         return chips
@@ -81,7 +86,7 @@ MAX_CRAWL_PAGES = 500   # hard ceiling per tenant; the free plan sets less via k
 
 def _http_url(url: HttpUrl) -> HttpUrl:
     """Crawl targets: https, or http for localhost (local dev). fetcher.py re-checks at fetch time."""
-    if url.scheme == "https" or (url.scheme == "http" and url.host in ("localhost", "127.0.0.1")):
+    if url.scheme == "https" or (url.scheme == "http" and url.host in LOCAL_HOSTS):
         return url
     raise ValueError("must be an https URL (http only for localhost)")
 
@@ -98,6 +103,7 @@ class KnowledgeConfig(BaseModel):
 
     @model_validator(mode="after")
     def has_a_source(self) -> "KnowledgeConfig":
+        """There must be something to crawl: a sitemap or a start URL."""
         if not self.sitemaps and not self.start_urls:
             raise ValueError("give at least one sitemap or start URL")
         return self
@@ -131,6 +137,7 @@ class TenantConfig(BaseModel):
     @field_validator("image_hosts")
     @classmethod
     def hosts_are_bare(cls, hosts: list[str]) -> list[str]:
+        """Image hosts must be bare 'host' or 'host:port' (lowercased)."""
         cleaned = [h.strip().lower() for h in hosts]
         for host in cleaned:
             if not re.match(HOST_PATTERN, host):
@@ -157,6 +164,7 @@ class TenantSeed(BaseModel):
     @field_validator("allowed_origins")
     @classmethod
     def origins_are_bare(cls, origins: list[str]) -> list[str]:
+        """Origins must be bare 'scheme://host[:port]' (normalised)."""
         cleaned = [normalize_origin(o) for o in origins]
         for origin in cleaned:
             if not re.match(ORIGIN_PATTERN, origin):

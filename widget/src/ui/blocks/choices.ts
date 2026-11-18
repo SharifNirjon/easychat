@@ -8,6 +8,7 @@ import { image, uid } from './shared';
 
 type ChoiceListBlock = Extract<Block, { type: 'choice_list' }>;
 
+/** One option: a native radio/checkbox inside its label, with optional thumbnail and detail. */
 function option(choice: Choice, group: string, type: 'radio' | 'checkbox'): HTMLLabelElement {
   const input = el('input', { type, name: group, value: choice.id, class: 'ec-choice-input' });
   const thumb = image(choice.image, 'ec-choice-img');
@@ -21,6 +22,7 @@ function option(choice: Choice, group: string, type: 'radio' | 'checkbox'): HTML
   ]);
 }
 
+/** A question with radio (single) or checkbox (multi) options; submitting sends the chosen labels. */
 export function renderChoiceList(block: ChoiceListBlock, onAction: ActionHandler): HTMLElement {
   const group = uid('choice');
   const type = block.mode === 'multi' ? 'checkbox' : 'radio';
@@ -29,6 +31,7 @@ export function renderChoiceList(block: ChoiceListBlock, onAction: ActionHandler
     block.submit_label ?? 'Next',
   ]);
 
+  /** Labels of the options currently ticked, in display order. */
   const chosen = () =>
     options.filter((label) => (label.querySelector('input') as HTMLInputElement).checked).map(
       (label) => label.querySelector('.ec-choice-label')?.textContent ?? '',
@@ -56,6 +59,7 @@ export function renderChoiceList(block: ChoiceListBlock, onAction: ActionHandler
   return form;
 }
 
+/** 'Step 2 of 4' with a progress bar, for multi-question flows. */
 function stepHeader(current: number, total: number): HTMLElement {
   const fill = el('span');
   // CSSOM, not a style="" attribute: works under a strict style-src CSP.
