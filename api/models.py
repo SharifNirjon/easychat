@@ -15,6 +15,9 @@ HEX_COLOR = r"^#[0-9A-Fa-f]{6}$"
 ORIGIN_PATTERN = r"^https?://[a-z0-9.-]+(:[0-9]{1,5})?$"   # scheme://host[:port], lowercase, no path
 HOST_PATTERN = r"^[a-z0-9.-]+(:[0-9]{1,5})?$"              # host[:port], lowercase, no scheme
 
+# TenantConfig fields the widget never receives (see tenancy.Tenant.public_config).
+SERVER_ONLY_FIELDS = frozenset({"image_hosts", "knowledge", "fallback"})
+
 
 def normalize_origin(origin: str) -> str:
     return origin.strip().rstrip("/").lower()
@@ -73,8 +76,44 @@ class Home(BaseModel):
         return chips
 
 
+MAX_CRAWL_PAGES = 500   # hard ceiling per tenant; the free plan sets less via knowledge.max_pages
+
+
+def _http_url(url: HttpUrl) -> HttpUrl:
+    """Crawl targets: https, or http for localhost (local dev). fetcher.py re-checks at fetch time."""
+    if url.scheme == "https" or (url.scheme == "http" and url.host in ("localhost", "127.0.0.1")):
+        return url
+    raise ValueError("must be an https URL (http only for localhost)")
+
+
+CrawlUrl = Annotated[HttpUrl, AfterValidator(_http_url)]
+
+
+class KnowledgeConfig(BaseModel):
+    """What to crawl. The crawler never leaves the hosts of these URLs."""
+    sitemaps: list[CrawlUrl] = Field(default_factory=list, max_length=5)
+    # Pages to index as-is; with no sitemap, the crawler also follows their same-site links.
+    start_urls: list[CrawlUrl] = Field(default_factory=list, max_length=20)
+    max_pages: int = Field(default=200, ge=1, le=MAX_CRAWL_PAGES)
+
+    @model_validator(mode="after")
+    def has_a_source(self) -> "KnowledgeConfig":
+        if not self.sitemaps and not self.start_urls:
+            raise ValueError("give at least one sitemap or start URL")
+        return self
+
+
+class Fallback(BaseModel):
+    """What to offer when the knowledge base has no answer (rendered as notice + chips)."""
+    text: str = Field(min_length=1, max_length=300)
+    contact_label: str = Field(default="Contact us", min_length=1, max_length=40)
+    contact_url: HttpsUrl | None = None
+    handoff_label: str = Field(default="Talk to a person", min_length=1, max_length=40)
+    handoff_message: str | None = Field(default=None, min_length=1, max_length=200)
+
+
 class TenantConfig(BaseModel):
-    """Everything the widget may see about a tenant (plus image_hosts, which it doesn't need).
+    """Everything the widget may see about a tenant, plus SERVER_ONLY_FIELDS, which it never gets.
     Stored in tenants.config."""
     company_name: str = Field(max_length=120)
     bot_name: str = Field(max_length=40)
@@ -86,6 +125,8 @@ class TenantConfig(BaseModel):
     theme: Theme
     # Hosts ("host" or "host:port") that block images may load from. Server-side only.
     image_hosts: list[str] = Field(default_factory=list, max_length=10)
+    knowledge: KnowledgeConfig | None = None   # server-only: what crawl.py indexes
+    fallback: Fallback | None = None           # server-only: offered when there's no answer
 
     @field_validator("image_hosts")
     @classmethod

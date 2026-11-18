@@ -37,6 +37,17 @@
       "surface": "#FCF8F4",
       "text": "#2A1C16"
     },
-    "image_hosts": ["localhost:3001"]
+    "image_hosts": ["localhost:3001"],
+    "knowledge": {
+      "sitemaps": ["http://localhost:3001/mirela/sitemap.xml"],
+      "max_pages": 50
+    },
+    "fallback": {
+      "text": "I couldn't find that in our shop info. Our care team can help.",
+      "contact_label": "Contact care team",
+      "contact_url": "https://example.com/contact",
+      "handoff_label": "Talk to a person",
+      "handoff_message": "I want to talk to a person"
+    }
   }
 }

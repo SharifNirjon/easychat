@@ -5,6 +5,7 @@ Multi-tenant AI chatbot SaaS. MVP: "Aria" widget + admin console. See `CLAUDE.md
 | Folder | What |
 |---|---|
 | `api/` | FastAPI: `/health`, `/ready`, `/config`, `/chat` (SSE). Postgres (RLS) + Redis limits |
+| `api/crawl.py`, `api/ask.py` | Knowledge base: crawl a tenant's site; inspect what retrieval finds |
 | `api/migrations/` | Plain SQL migrations, applied in order by `migrate.py` |
 | `api/seeds/*.json` | Tenant + site key definitions, loaded with `seed_tenant.py` |
 | `api/tests/` | pytest suite (runs against a throwaway database) |
@@ -123,7 +124,26 @@ Send the next turn with `"conversation_id": "<that id>"`. The server keeps the h
 send only their new message. Failures arrive as `event: error`, never a hang. Limit hits are
 HTTP 429 with `Retry-After`.
 
-## 7. Tests
+## 7. Knowledge base (grounded answers)
+A tenant's `knowledge` config (seed file) says what to crawl: `sitemaps` and/or `start_urls`, and
+`max_pages`. With no sitemap the crawler follows same-site links from the start URLs. It is plain
+HTTP (no JavaScript), so single-page apps need prerendered HTML, as culpine.com has.
+```sh
+cd api
+python crawl.py culpine          # crawl -> chunk -> bge-m3 embeddings -> pgvector (re-run any time)
+python ask.py culpine "Where is your office?"   # what retrieval finds, with scores; no chat model call
+```
+(Docker: `docker compose --profile api run --rm api python crawl.py culpine`.)
+
+- Re-crawling only re-embeds pages whose content changed; pages gone from the site are removed.
+- The crawler only fetches the hosts of the configured URLs, over https (http only for localhost
+  in local/test), and refuses private/internal addresses, including after redirects.
+- Mirela's pages live in `widget/demo/mirela/` (served on :3001 by `DEMO_PORT=3001 npm run dev`).
+- Once a tenant has a knowledge base, `/chat` answers from it: replies carry a `sources` block
+  (and product cards for schema.org `Product` pages). When the knowledge doesn't answer, the
+  reply says so and shows the tenant's `fallback` (notice + contact/handoff chips).
+
+## 8. Tests
 ```sh
 docker compose run --rm --build api-test      # pytest against easychat_test + Redis db 15
 cd widget && npm run build                     # typecheck + build + size budget
@@ -135,6 +155,10 @@ CI (`.github/workflows/ci.yml`) runs the same on every push and pull request.
 - `PRIVACY_MODE` defaults to `strict`: `{"data_collection":"deny","zdr":true,"sort":"latency"}`.
   `dev` (no provider prefs, so free models work) is **refused** unless `APP_ENV` is local/test.
 - `REASONING=off` disables model reasoning for the fastest first token; `low` enables light reasoning (never streamed to the client).
+  **`openai/gpt-oss-20b` requires `REASONING=low`**: it rejects requests with reasoning disabled.
+- Knowledge: `EMBED_MODEL` (default `baai/bge-m3`, must return 1024 dimensions), `RAG_MIN_SCORE`
+  (default 0.45: cosine similarity a chunk needs to be used), `RAG_TOP_K` (default 6 chunks per answer).
+  Tune the floor with `ask.py`.
 - Limits: `IP_MESSAGES_PER_MINUTE` (default 20), `MAX_REQUEST_BYTES` (16 KB). Per-tenant caps
   (daily tokens, monthly conversations, turns per conversation) live in the tenant's `limits`.
 - `TRUSTED_PROXY_HOPS`: number of proxies in front of the API that append to `X-Forwarded-For`

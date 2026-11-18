@@ -43,6 +43,13 @@ def _int(name: str, default: str) -> int:
     return value
 
 
+def _fraction(name: str, default: str) -> float:
+    value = float(_required(name, default))
+    if not 0 < value < 1:
+        raise RuntimeError(f"{name} must be between 0 and 1")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str                 # local | test | staging | production
@@ -56,6 +63,11 @@ class Settings:
     reasoning: str               # "off" | "low"
     max_tokens: int
     timeout_seconds: float
+
+    # Knowledge (roadmap step 5): embeddings + retrieval
+    embed_model: str             # must return EMBED_DIMENSIONS-long vectors (see embeddings.py)
+    rag_min_score: float         # cosine similarity a chunk needs to count as relevant (0..1)
+    rag_top_k: int               # chunks given to the model per answer
 
     # Data stores
     database_url: str            # the API's login role: a member of easychat_app, never the owner
@@ -91,6 +103,11 @@ def load_settings() -> Settings:
         reasoning=_choice("REASONING", "off", ("off", "low")),
         max_tokens=_int("MAX_TOKENS", "600"),
         timeout_seconds=float(_required("LLM_TIMEOUT_SECONDS", "20")),
+        embed_model=_required("EMBED_MODEL", "baai/bge-m3"),
+        # bge-m3 on real pages (step 5 tuning): relevant chunks ~0.47-0.61, unrelated ~0.40-0.47.
+        # The model's no-answer marker is the second gate, so the floor leans towards recall.
+        rag_min_score=_fraction("RAG_MIN_SCORE", "0.45"),
+        rag_top_k=_int("RAG_TOP_K", "6"),
         database_url=_required("DATABASE_URL"),
         redis_url=_required("REDIS_URL"),
         ip_messages_per_minute=_int("IP_MESSAGES_PER_MINUTE", "20"),

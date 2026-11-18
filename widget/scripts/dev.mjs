@@ -18,6 +18,8 @@ const CONTENT_TYPES = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.woff2': 'font/woff2',
+  '.xml': 'application/xml; charset=utf-8', // demo/mirela/sitemap.xml, read by the API's crawler
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 /** Tiny static file server. Refuses paths that escape `dir`. */

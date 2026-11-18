@@ -19,10 +19,15 @@ SSE events sent by /chat:
   token  {"t": "<text chunk>"}          one per chunk, in order
   block  {"type": "...", ...}           zero or more UI blocks after the text (validated, see blocks.py)
   done   {}                             reply finished successfully (and was saved)
+  error  {"message": "..."}             something failed; the stream then ends (never hangs)
+
+Grounding (step 5): if the tenant has a knowledge base, each turn retrieves relevant chunks
+(retrieval.py) into the system prompt, and the reply's blocks are built by code (grounding.py):
+product cards + sources when it answered, or the tenant's fallback when the model said it
+doesn't know. Without a knowledge base the assistant answers as before.
 
 In local/test, a message `/demo <name>` replies with sample blocks without calling the model
 (see demo.py).
-  error  {"message": "..."}             something failed; the stream then ends (never hangs)
 """
 import asyncio
 import json
@@ -38,12 +43,17 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import conversations
 import db
 import limits
+import retrieval
 from blocks import validate_blocks
 from config import settings
 from demo import DemoReply, demo_reply
+from embeddings import EmbeddingError
+from grounding import (NO_ANSWER_MARKER, MarkerFilter, fallback_blocks, knowledge_block, product_blocks,
+                       sources_block)
 from llm import Usage, stream_reply, user_facing_error
 from middleware import BodySizeLimitMiddleware, RequestContextMiddleware, configure_logging
-from prompts import assistant_system_prompt
+from prompts import assistant_system_prompt, grounded_system_prompt
+from retrieval import Retrieval
 from schemas import ChatRequest
 from tenancy import SITE_KEY_PATTERN, Tenant, resolve_tenant
 
@@ -93,10 +103,40 @@ def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-def build_prompt(tenant: Tenant, history: list[dict]) -> list[dict]:
-    """System prompt first, then the stored conversation (already trimmed to recent turns)."""
-    system = assistant_system_prompt(tenant.config.bot_name, tenant.config.company_name)
+def build_prompt(tenant: Tenant, history: list[dict], knowledge: Retrieval | None = None) -> list[dict]:
+    """System prompt first, then the stored conversation (already trimmed to recent turns).
+
+    With a knowledge base, the system prompt also carries the grounding rules and the retrieved
+    chunks; without one (knowledge=None) the assistant behaves as before step 5.
+    """
+    name, company = tenant.config.bot_name, tenant.config.company_name
+    if knowledge is None:
+        system = assistant_system_prompt(name, company)
+    else:
+        system = grounded_system_prompt(name, company, knowledge_block(knowledge.hits), NO_ANSWER_MARKER)
     return [{"role": "system", "content": system}, *history]
+
+
+async def find_knowledge(tenant: Tenant, turn: conversations.Turn) -> Retrieval | None:
+    """Retrieved chunks for this turn, or None if the tenant has no knowledge base yet."""
+    if not await retrieval.has_knowledge(tenant.id):
+        return None
+    found = await retrieval.retrieve(tenant.id, retrieval.search_query(turn.history))
+    log.info("retrieval: %d relevant of %d candidates", len(found.hits), found.candidates)
+    return found
+
+
+async def knowledge_blocks(tenant: Tenant, knowledge: Retrieval | None, no_answer: bool) -> list[dict]:
+    """Blocks built by code from database rows: fallback, or product cards + sources."""
+    if knowledge is None:
+        return []
+    if no_answer:
+        return fallback_blocks(tenant.config.fallback)
+    if not knowledge.hits:
+        return []          # small talk: nothing was needed and nothing was used
+    product_ids = list(dict.fromkeys(h.product_id for h in knowledge.hits if h.product_id))
+    rows = await retrieval.products_for(tenant.id, product_ids)
+    return product_blocks(rows, tenant.asset_policy(settings.is_dev)) + sources_block(knowledge.hits)
 
 
 def client_ip(request: Request) -> str:
@@ -136,30 +176,54 @@ async def reply_events(tenant: Tenant, turn: conversations.Turn) -> AsyncIterato
     """Turn a reply into SSE events: meta, tokens, validated blocks, then `done` (or `error`)."""
     yield sse_event("meta", {"conversation_id": str(turn.conversation_id)})
     usage = Usage()
+    embed_tokens = 0
     reply: list[str] = []
     demo = demo_for(tenant, turn)
+    marker = MarkerFilter()       # strips the model's "no answer" signal from the visible text
     try:
-        text_stream = _as_stream(demo.text) if demo else stream_reply(build_prompt(tenant, turn.history), usage)
+        knowledge = None
+        if demo:
+            text_stream = _as_stream(demo.text)
+        else:
+            knowledge = await find_knowledge(tenant, turn)
+            embed_tokens = knowledge.embed_tokens if knowledge else 0
+            text_stream = stream_reply(build_prompt(tenant, turn.history, knowledge), usage)
         async for text in text_stream:
-            reply.append(text)
-            yield sse_event("token", {"t": text})
+            visible = marker.feed(text)
+            if visible:
+                reply.append(visible)
+                yield sse_event("token", {"t": visible})
+        rest = marker.flush()
+        if rest:
+            reply.append(rest)
+            yield sse_event("token", {"t": rest})
 
-        if not reply:
-            yield sse_event("error", {"message": "The model returned an empty reply."})
-            return
+        if not "".join(reply).strip():
+            if not marker.found:
+                yield sse_event("error", {"message": "The model returned an empty reply."})
+                return
+            # The model sent only the marker: say "I don't know" in the tenant's words.
+            fallback = tenant.config.fallback
+            reply = [fallback.text if fallback else "Sorry, I don't know the answer to that."]
+            yield sse_event("token", {"t": reply[0]})
+
+        raw_blocks = demo.blocks if demo else await knowledge_blocks(tenant, knowledge, marker.found)
         # Every block is validated here, whatever produced it; invalid ones never leave the server.
-        blocks = validate_blocks(demo.blocks, tenant.asset_policy(settings.is_dev)) if demo else []
+        blocks = validate_blocks(raw_blocks, tenant.asset_policy(settings.is_dev))
         await conversations.save_reply(
-            tenant, turn.conversation_id, "".join(reply), usage.model, usage.tokens_in, usage.tokens_out, blocks
+            tenant, turn.conversation_id, "".join(reply).strip(), usage.model, usage.tokens_in,
+            usage.tokens_out, blocks,
         )
         for block in blocks:
             yield sse_event("block", block)
         yield sse_event("done", {})
+    except EmbeddingError:
+        yield sse_event("error", {"message": "The assistant is unavailable right now. Please try again."})
     except Exception as exc:  # any failure becomes an event so the widget never hangs
         yield sse_event("error", {"message": user_facing_error(exc)})
     finally:
         # Runs even if the visitor disconnects mid-stream (when awaiting here could be cancelled).
-        _in_background(limits.record_tokens(tenant.id, usage.total))
+        _in_background(limits.record_tokens(tenant.id, usage.total + embed_tokens))
 
 
 @app.get("/health")

@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 import db
 from blocks import AssetPolicy
-from models import SITE_KEY_PATTERN, TenantConfig, TenantLimits, normalize_origin
+from models import SERVER_ONLY_FIELDS, SITE_KEY_PATTERN, TenantConfig, TenantLimits, normalize_origin
 
 __all__ = ["SITE_KEY_PATTERN", "Tenant", "resolve_tenant"]
 
@@ -24,8 +24,8 @@ class Tenant:
     limits: TenantLimits
 
     def public_config(self) -> dict:
-        """What the widget is allowed to see. Never includes origins, limits, ids or image hosts."""
-        return self.config.model_dump(mode="json", exclude={"image_hosts"})
+        """What the widget is allowed to see. Never origins, limits, ids, or SERVER_ONLY_FIELDS."""
+        return self.config.model_dump(mode="json", exclude=set(SERVER_ONLY_FIELDS))
 
     def asset_policy(self, allow_local_http: bool) -> AssetPolicy:
         """URL rules for this tenant's UI blocks (see blocks.py)."""

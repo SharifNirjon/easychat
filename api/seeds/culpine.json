@@ -42,6 +42,17 @@
       "surface": "#FCFDF7",
       "text": "#10211B"
     },
-    "image_hosts": []
+    "image_hosts": [],
+    "knowledge": {
+      "sitemaps": ["https://www.culpine.com/sitemap.xml"],
+      "max_pages": 200
+    },
+    "fallback": {
+      "text": "I don't have that in Culpine's website info yet. The team can answer it directly.",
+      "contact_label": "Contact the team",
+      "contact_url": "https://culpine.com/contact",
+      "handoff_label": "Talk to a person",
+      "handoff_message": "I'd like to talk to a person on the team."
+    }
   }
 }
