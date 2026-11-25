@@ -17,6 +17,8 @@ Errors before streaming starts are plain JSON {"detail": ...} with 4xx/5xx statu
 SSE events sent by /chat:
   meta   {"conversation_id": "<uuid>"}  first event; the widget sends this id with the next turn
   token  {"t": "<text chunk>"}          one per chunk, in order
+  replace {"text": "..."}              the output guard blocked the reply: show this text instead of
+                                        the tokens so far (then blocks, then done)
   block  {"type": "...", ...}           zero or more UI blocks after the text (validated, see blocks.py)
   done   {}                             reply finished successfully (and was saved)
   error  {"message": "..."}             something failed; the stream then ends (never hangs)
@@ -25,6 +27,12 @@ Grounding (step 5): if the tenant has a knowledge base, each turn retrieves rele
 (retrieval.py) into the system prompt, and the reply's blocks are built by code (grounding.py):
 product cards + sources when it answered, or the tenant's fallback when the model said it
 doesn't know. Without a knowledge base the assistant answers as before.
+
+Guardrails (step 6, guards.py): visitor messages are cleaned of hidden characters and checked
+for injection patterns (flags add a reminder to the prompt and are stored, never block). Every
+model reply streams through guards.OutputGuard; on a violation (prompt leak, order claim,
+invented contact details or a foreign link) the stream stops and a `replace` event swaps in a
+safe reply. The verdicts are stored in messages.guard_flags.
 
 In local/test, a message `/demo <name>` replies with sample blocks without calling the model
 (see demo.py).
@@ -35,6 +43,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,11 +57,12 @@ from blocks import validate_blocks
 from config import settings
 from demo import DemoReply, demo_reply
 from embeddings import EmbeddingError
+from guards import PROMPT_LEAK, OutputGuard, new_canary, safe_reply
 from grounding import (NO_ANSWER_MARKER, MarkerFilter, fallback_blocks, knowledge_block, product_blocks,
                        sources_block)
 from llm import Usage, stream_reply, user_facing_error
 from middleware import BodySizeLimitMiddleware, RequestContextMiddleware, configure_logging
-from prompts import assistant_system_prompt, grounded_system_prompt
+from prompts import PROMPT_FINGERPRINTS, assistant_system_prompt, grounded_system_prompt, injection_reminder
 from retrieval import Retrieval
 from schemas import ChatRequest
 from tenancy import SITE_KEY_PATTERN, Tenant, resolve_tenant
@@ -104,18 +114,40 @@ def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-def build_prompt(tenant: Tenant, history: list[dict], knowledge: Retrieval | None = None) -> list[dict]:
+def build_prompt(tenant: Tenant, turn: conversations.Turn, canary: str,
+                 knowledge: Retrieval | None = None) -> list[dict]:
     """System prompt first, then the stored conversation (already trimmed to recent turns).
 
     With a knowledge base, the system prompt also carries the grounding rules and the retrieved
-    chunks; without one (knowledge=None) the assistant behaves as before step 5.
+    chunks; without one (knowledge=None) the assistant behaves as before step 5. If the visitor's
+    message matched an injection pattern, the prompt also gets a reminder to keep the rules.
     """
     name, company = tenant.config.bot_name, tenant.config.company_name
+    flagged = bool(turn.flags)
     if knowledge is None:
-        system = assistant_system_prompt(name, company)
+        system = assistant_system_prompt(name, company, canary) + (injection_reminder() if flagged else "")
     else:
-        system = grounded_system_prompt(name, company, knowledge_block(knowledge.hits), NO_ANSWER_MARKER)
-    return [{"role": "system", "content": system}, *history]
+        system = grounded_system_prompt(name, company, canary, knowledge_block(knowledge.hits), NO_ANSWER_MARKER,
+                                        flagged)
+    return [{"role": "system", "content": system}, *turn.history]
+
+
+def output_guard(tenant: Tenant, turn: conversations.Turn, knowledge: Retrieval | None, canary: str) -> OutputGuard:
+    """The guard for one reply. Contact details may come from the retrieved knowledge, the tenant's
+    config or the conversation itself; links may only point to the tenant's own sites."""
+    config = tenant.config
+    hits = knowledge.hits if knowledge else []
+    allowed = [config.company_name, *(f"{h.title}\n{h.url}\n{h.content}" for h in hits),
+               *(m["content"] for m in turn.history)]
+    urls = [str(config.privacy_url), *(h.url for h in hits)]
+    if config.fallback:
+        allowed.append(config.fallback.text)
+        urls += [str(config.fallback.contact_url)] if config.fallback.contact_url else []
+    if config.knowledge:
+        urls += [str(u) for u in (*config.knowledge.sitemaps, *config.knowledge.start_urls)]
+    allowed += urls
+    hosts = {urlsplit(u).hostname for u in urls if urlsplit(u).hostname}
+    return OutputGuard(canary, PROMPT_FINGERPRINTS, "\n".join(allowed), hosts)
 
 
 async def find_knowledge(tenant: Tenant, turn: conversations.Turn) -> Retrieval | None:
@@ -175,14 +207,38 @@ async def _as_stream(text: str) -> AsyncIterator[str]:
     yield text
 
 
+async def _visible_text(stream: AsyncIterator[str], marker: MarkerFilter,
+                        guard: OutputGuard | None) -> AsyncIterator[str]:
+    """The model's text as the visitor may see it: no-answer marker removed, then checked by the
+    output guard. Stops, and closes the model stream, at the first guard violation."""
+    try:
+        async for text in stream:
+            visible = marker.feed(text)
+            if guard:
+                visible = guard.feed(visible)
+                if guard.violation:
+                    return
+            if visible:
+                yield visible
+        rest = marker.flush()
+        if guard:
+            rest = guard.feed(rest) + guard.flush()
+        if rest:
+            yield rest
+    finally:
+        await stream.aclose()
+
+
 async def reply_events(tenant: Tenant, turn: conversations.Turn) -> AsyncIterator[str]:
-    """Turn a reply into SSE events: meta, tokens, validated blocks, then `done` (or `error`)."""
+    """Turn a reply into SSE events: meta, tokens, `replace` if the guard blocked the reply,
+    validated blocks, then `done` (or `error`)."""
     yield sse_event("meta", {"conversation_id": str(turn.conversation_id)})
     usage = Usage()
     embed_tokens = 0
     reply: list[str] = []
     demo = demo_for(tenant, turn)
     marker = MarkerFilter()       # strips the model's "no answer" signal from the visible text
+    guard: OutputGuard | None = None   # demo replies are our own text: nothing to guard
     try:
         knowledge = None
         if demo:
@@ -190,18 +246,20 @@ async def reply_events(tenant: Tenant, turn: conversations.Turn) -> AsyncIterato
         else:
             knowledge = await find_knowledge(tenant, turn)
             embed_tokens = knowledge.embed_tokens if knowledge else 0
-            text_stream = stream_reply(build_prompt(tenant, turn.history, knowledge), usage)
-        async for text in text_stream:
-            visible = marker.feed(text)
-            if visible:
-                reply.append(visible)
-                yield sse_event("token", {"t": visible})
-        rest = marker.flush()
-        if rest:
-            reply.append(rest)
-            yield sse_event("token", {"t": rest})
+            canary = new_canary()
+            guard = output_guard(tenant, turn, knowledge, canary)
+            text_stream = stream_reply(build_prompt(tenant, turn, canary, knowledge), usage)
+        async for visible in _visible_text(text_stream, marker, guard):
+            reply.append(visible)
+            yield sse_event("token", {"t": visible})
 
-        if not "".join(reply).strip():
+        violation = guard.violation if guard else None
+        if violation:
+            # Never shown in full, never stored: the visitor gets a safe reply instead.
+            log.warning("output guard replaced a reply: %s", violation)
+            reply = [safe_reply(violation, tenant.config.company_name)]
+            yield sse_event("replace", {"text": reply[0]})
+        elif not "".join(reply).strip():
             if not marker.found:
                 yield sse_event("error", {"message": "The model returned an empty reply."})
                 return
@@ -210,12 +268,15 @@ async def reply_events(tenant: Tenant, turn: conversations.Turn) -> AsyncIterato
             reply = [fallback.text if fallback else "Sorry, I don't know the answer to that."]
             yield sse_event("token", {"t": reply[0]})
 
-        raw_blocks = demo.blocks if demo else await knowledge_blocks(tenant, knowledge, marker.found)
+        if violation:
+            raw_blocks = [] if violation == PROMPT_LEAK else fallback_blocks(tenant.config.fallback)
+        else:
+            raw_blocks = demo.blocks if demo else await knowledge_blocks(tenant, knowledge, marker.found)
         # Every block is validated here, whatever produced it; invalid ones never leave the server.
         blocks = validate_blocks(raw_blocks, tenant.asset_policy(settings.is_dev))
         await conversations.save_reply(
             tenant, turn.conversation_id, "".join(reply).strip(), usage.model, usage.tokens_in,
-            usage.tokens_out, blocks,
+            usage.tokens_out, blocks, [violation] if violation else None,
         )
         for block in blocks:
             yield sse_event("block", block)

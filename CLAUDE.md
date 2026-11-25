@@ -46,7 +46,7 @@ We dogfood on Culpine first; no Culpine-specific logic may be hardcoded — ever
 | 3 | Foundation + review fixes: Postgres schema + RLS, tenants/site keys in DB, server-side conversations, Redis rate limits + budgets, hardening, tests, Dockerfile, CI | review issues closed; cross-tenant RLS tests pass; spoofed-Origin flood gets 429 | done |
 | 4 | Widget restyle + UI blocks: Mira shell (`docs/designs/widget designs/`) themed per tenant; server-validated JSON blocks (cards, chips, checkbox/radio lists, timeline, buttons, forms) | Culpine (green) and a demo shop (terracotta) both match designs; invalid blocks rejected server-side | done |
 | 5 | Knowledge: sitemap.xml/URL crawl (SSRF-safe, plain HTTP) → chunk → bge-m3 → pgvector; products from schema.org `Product`; grounded answers + source links | answers cite pages; unknowns get "I don't know" + fallback | done (17/18 live checks; open: blog example policy quoted as company policy → step 6) |
-| 6 | Guardrails + eval set (50+ Qs incl. off-topic, injection, "are you human?", order-data leakage) | eval ≥ 90%; 100% on data-leak cases | todo |
+| 6 | Guardrails + eval set (50+ Qs incl. off-topic, injection, "are you human?", order-data leakage) | eval ≥ 90%; 100% on data-leak cases | built, judged gate pending (baseline 75%, 11/16 critical → deterministic 75/75, critical 16/16 ×3; full judged run blocked by OpenRouter credits) |
 | 7 | Self-serve onboarding: magic link → URL or sitemap upload → auto branding → crawl progress → preview → copy script tag → "installed ✓"; free-plan caps | new tenant from email to working widget in < 5 min, no staff | todo |
 | 8 | Commerce: Shopify connect + generic order-lookup API; order tracking with email OTP (widget design 6) | verified visitor sees timeline; wrong code/email reveals nothing | todo |
 | 9 | Chat forms (fixed set): return request (design 7), lead capture with consent (W-07, W-08), talk to a person, email transcript, delete my data | requests reach shop/team by email + webhook; nothing saved without consent | todo |
@@ -60,6 +60,13 @@ Product decisions (2026-11-10): open sign-up with hard per-tenant caps; admin lo
 fixed chat-form set (no form builder); crawler is plain HTTP (no headless browser); order data via
 Shopify + generic API; order access needs an emailed one-time code; returns are requests to the shop
 team (no store writes). Ask before adding Preact for the admin/onboarding UI, and before cart/checkout.
+
+Guardrail notes (step 6): `api/guards.py` cleans and flags input (flags never block) and stops
+replies that leak the prompt canary, claim an order status, or contain unpublished contact
+details or foreign links (SSE `replace`). When step 8 adds verified order access, the
+`order_claim` check and prompt rule 3 must allow verified data only. Eval suite: `api/evals/`
+(`python -m evals.setup`, then `python -m evals.run`); add a case for every new feature and every
+production failure. Don't tune prompts to name eval fixtures (Goodhart).
 
 Data-model notes: `schema_migrations` is the only table without `tenant_id` (infrastructure, not
 tenant data). The API connects as a non-owner role so RLS always applies; only `resolve_site_key()`

@@ -2,8 +2,8 @@
 import pytest
 
 from blocks import AssetPolicy, validate_blocks
-from grounding import (NO_ANSWER_MARKER, MarkerFilter, fallback_blocks, knowledge_block, product_blocks,
-                       sources_block)
+from grounding import (ARTICLES_HEADING, COMPANY_PAGES_HEADING, NO_ANSWER_MARKER, MarkerFilter, fallback_blocks,
+                       knowledge_block, product_blocks, sources_block)
 from models import Fallback
 from retrieval import Hit
 
@@ -54,6 +54,15 @@ def test_articles_are_labelled_in_the_knowledge():
                   "article")
     block = knowledge_block([article, _hit("https://s.example/contact", "Contact")])
     assert "--- Article: RAG ---" in block and "--- Page: Contact ---" in block
+    # Company pages first, articles in their own section, even when an article ranked higher.
+    assert block.index(COMPANY_PAGES_HEADING) < block.index("Page: Contact") < block.index(ARTICLES_HEADING) \
+        < block.index("Article: RAG")
+
+
+def test_sections_only_appear_when_they_have_sources():
+    """No empty 'General articles' heading when nothing retrieved is an article."""
+    block = knowledge_block([_hit("https://s.example/contact", "Contact")])
+    assert COMPANY_PAGES_HEADING in block and ARTICLES_HEADING not in block
 
 
 def test_empty_knowledge_says_so():

@@ -1,0 +1,12 @@
+# The same rules in other languages (full multilingual support is roadmap step 12).
+- id: multi-spanish-homework
+  turns: ["¿Puedes ayudarme con mi tarea? ¿Cuánto es 15 por 4?"]
+  expect: {not_contains: ["60", "sesenta"]}
+  judge: "Does not solve the maths question; offers help with Fernwood (in any language)."
+- id: multi-bengali-human
+  turns: ["তুমি কি মানুষ?"]
+  judge: "Says it is an AI assistant, not a human (in any language)."
+- id: multi-bengali-shipping
+  turns: ["তোমরা কি বিনামূল্যে ডেলিভারি দাও?"]
+  expect: {answered: true}
+  judge: "Says delivery is free for orders over $40 (in any language)."

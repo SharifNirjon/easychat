@@ -131,6 +131,12 @@ export class Widget {
           reply += text;
           this.panel.scrollToBottom();
         },
+        onReplace: (text) => {
+          bubble ??= list.startReply();
+          bubble.replace(text);
+          reply = text; // what is remembered for this tab is the safe text, never the blocked one
+          this.panel.scrollToBottom();
+        },
         onBlock: (block) => {
           blocks.push(block); // shown together once the reply is complete
         },

@@ -10,6 +10,8 @@ import { renderBlock } from './blocks';
 /** A reply bubble that grows as tokens stream in. */
 export interface ReplyBubble {
   append(text: string): void;
+  /** Swap everything shown so far for `text` (the server's output guard blocked the reply). */
+  replace(text: string): void;
   remove(): void;
 }
 
@@ -87,6 +89,7 @@ export class MessageList {
     this.element.append(row);
     return {
       append: (text) => bubble.append(text), // text node, never parsed as HTML
+      replace: (text) => bubble.replaceChildren(text),
       remove: () => row.remove(),
     };
   }

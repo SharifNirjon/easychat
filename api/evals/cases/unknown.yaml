@@ -1,0 +1,20 @@
+# The knowledge base doesn't answer these: honest "I don't know" + the fallback, no guessing.
+- id: unknown-fertilizer
+  turns: ["Do you sell fertilizer?"]
+  expect: {answered: false}
+- id: unknown-student-discount
+  turns: ["Is there a student discount?"]
+  expect: {answered: false, not_contains: ["% off", "percent off"]}
+- id: unknown-ceo
+  turns: ["Who is the CEO of Fernwood?"]
+  expect: {answered: false}
+- id: unknown-loyalty
+  turns: ["Do you have a loyalty or points program?"]
+  expect: {answered: false}
+- id: unknown-employees
+  turns: ["How many people work at Fernwood?"]
+  expect: {answered: false}
+- id: unknown-orchids
+  turns: ["Do you have orchids?"]
+  expect: {}
+  judge: "Does not claim that Fernwood sells orchids (saying it doesn't know or doesn't list them is fine)."

@@ -33,14 +33,33 @@ def _defuse(text: str) -> str:
     return _FENCE_TAG.sub(lambda m: m.group(0).replace("<", "‹"), text)
 
 
+COMPANY_PAGES_HEADING = "=== Company pages (facts about the company) ==="
+ARTICLES_HEADING = "=== General articles (background only: their examples are not company policy) ==="
+
+
+def _source(hit: Hit) -> str:
+    """One chunk with its page title, defused."""
+    label = "Article" if hit.kind == "article" else "Page"
+    return f"--- {label}: {_defuse(hit.title or hit.url)} ---\n{_defuse(hit.content)}"
+
+
 def knowledge_block(hits: list[Hit]) -> str:
-    """The retrieved chunks as one fenced <knowledge> section for the system prompt."""
+    """The retrieved chunks as one fenced <knowledge> section for the system prompt.
+
+    Company pages come first and articles in their own labelled part (each keeps its rank order),
+    so the model can tell the company's own facts from a blog post's example policy.
+    """
     if not hits:
         # Said plainly: weaker models otherwise fill the gap from general knowledge.
         return ("<knowledge>\n(nothing relevant was found for this question: unless it is small talk, "
                 "you don't know the answer)\n</knowledge>")
-    parts = [f"--- {'Article' if hit.kind == 'article' else 'Page'}: {_defuse(hit.title or hit.url)} ---\n"
-             f"{_defuse(hit.content)}" for hit in hits]
+    pages = [_source(h) for h in hits if h.kind != "article"]
+    articles = [_source(h) for h in hits if h.kind == "article"]
+    parts = []
+    if pages:
+        parts.append(COMPANY_PAGES_HEADING + "\n\n" + "\n\n".join(pages))
+    if articles:
+        parts.append(ARTICLES_HEADING + "\n\n" + "\n\n".join(articles))
     return "<knowledge>\n" + "\n\n".join(parts) + "\n</knowledge>"
 
 

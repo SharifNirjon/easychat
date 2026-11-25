@@ -22,6 +22,8 @@ export type FailureKind =
 export interface StreamHandlers {
   onConversation(id: string): void;
   onToken(text: string): void;
+  /** The server's output guard blocked the reply: show this text instead of the tokens so far. */
+  onReplace(text: string): void;
   /** A UI block (already validated by the server). Arrives after the text, before `done`. */
   onBlock(block: Block): void;
   onDone(): void;
@@ -110,11 +112,13 @@ export async function streamChat(turn: ChatTurn, handlers: StreamHandlers, signa
         buffer = buffer.slice(boundary + 2);
         if (!parsed) continue;
 
-        const data = parsed.data as { t?: unknown; message?: unknown; conversation_id?: unknown };
+        const data = parsed.data as { t?: unknown; text?: unknown; message?: unknown; conversation_id?: unknown };
         if (parsed.event === 'meta' && typeof data.conversation_id === 'string') {
           handlers.onConversation(data.conversation_id);
         } else if (parsed.event === 'token' && typeof data.t === 'string') {
           handlers.onToken(data.t);
+        } else if (parsed.event === 'replace' && typeof data.text === 'string') {
+          handlers.onReplace(data.text);
         } else if (parsed.event === 'block' && parsed.data && typeof parsed.data === 'object') {
           handlers.onBlock(parsed.data as Block);
         } else if (parsed.event === 'done') {

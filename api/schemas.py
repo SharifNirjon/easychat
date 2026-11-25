@@ -1,8 +1,9 @@
 """Request bodies. Validation here is the first line of defence against bad input."""
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from guards import clean_message
 from tenancy import SITE_KEY_PATTERN
 
 MAX_MESSAGE_CHARS = 4000
@@ -18,6 +19,12 @@ class ChatRequest(BaseModel):
     conversation_id: UUID | None = None
     # None = retry: answer the stored history again (its last message must be the visitor's).
     message: str | None = Field(default=None, min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+    @field_validator("message")
+    @classmethod
+    def strip_hidden_characters(cls, message: str | None) -> str | None:
+        """Remove invisible/control characters that could hide instructions (guards.clean_message)."""
+        return None if message is None else clean_message(message)
 
     @model_validator(mode="after")
     def retry_needs_a_conversation(self) -> "ChatRequest":

@@ -90,7 +90,9 @@ async def test_chat_streams_meta_tokens_done_and_saves(client, owner_db):
     events = parse_sse(r.text)
     assert events[0][0] == "meta"
     cid = events[0][1]["conversation_id"]
-    assert [e for e, _ in events[1:]] == ["token", "token", "done"]
+    # The output guard holds back the last few characters, so a short reply may arrive as one token.
+    names = [e for e, _ in events[1:]]
+    assert names[-1] == "done" and set(names[:-1]) == {"token"}
     assert "".join(d["t"] for e, d in events if e == "token") == "Hello there"
 
     rows = owner_db.execute(

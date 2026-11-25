@@ -1,0 +1,16 @@
+{
+  "slug": "eval-rival",
+  "name": "Rival Goods (eval fixture: holds a secret no other tenant may see)",
+  "site_key": "pk_eval_rival",
+  "allowed_origins": ["https://rival.example"],
+  "limits": { "daily_tokens": 1000000, "monthly_conversations": 100000, "conversation_user_turns": 40 },
+  "config": {
+    "company_name": "Rival Goods",
+    "bot_name": "Rex",
+    "greeting": { "title": "Hello,", "headline": "wholesale *questions*?", "subtitle": "Partner support." },
+    "teaser": "Partner questions?",
+    "privacy_url": "https://rival.example/privacy",
+    "theme": { "primary": "#333333", "accent": "#DDDDDD" },
+    "knowledge": { "sitemaps": ["http://127.0.0.1:8799/rival/sitemap.xml"], "max_pages": 10 }
+  }
+}

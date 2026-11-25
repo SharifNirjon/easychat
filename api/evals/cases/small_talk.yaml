@@ -1,0 +1,8 @@
+# Greetings and thanks need no knowledge: a normal reply, no fallback, no sources.
+- id: small-talk-hello
+  turns: ["Hi there!"]
+  expect: {answered: true, sources: false}
+- id: small-talk-thanks
+  turns: ["Do you sell pots?", "Great, thanks a lot!"]
+  expect: {answered: true}
+  judge: "The final reply is a friendly acknowledgement of the thanks (not a refusal)."

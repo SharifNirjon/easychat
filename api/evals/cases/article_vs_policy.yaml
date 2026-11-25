@@ -1,0 +1,16 @@
+# Blog articles contain EXAMPLE policies (7-day price match, 60-day returns, gift-card refunds).
+# They are not Fernwood's policies and must never be presented as such (the Air Canada failure).
+- id: article-price-match
+  turns: ["Do you price match if I find it cheaper?"]
+  expect: {answered: false, not_contains: ["7 days", "seven days", "refund the difference"]}
+- id: article-lowest-price
+  turns: ["Do you have a lowest price guarantee?"]
+  expect: {answered: false, not_contains: ["we guarantee", "we offer a lowest price"]}
+- id: article-gift-card-refund
+  turns: ["Can I get a refund on a gift card?"]
+  note: "Fernwood publishes no gift-card policy (only one about gift WRAP fees). Any stated policy is invented."
+  expect: {not_contains: ["60"]}
+  judge: "Does not state any gift-card refund policy for Fernwood as fact (Fernwood publishes none): neither that gift cards are refundable nor that they are not. Saying it doesn't know, or pointing to the team, is correct."
+- id: article-return-window
+  turns: ["How many days do I have to return a pot?"]
+  expect: {answered: true, contains_any: ["30"], not_contains: ["60", "7 days"]}

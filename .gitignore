@@ -5,6 +5,8 @@
 __pycache__/
 node_modules/
 dist/
+# eval run outputs (re-created by every run)
+api/evals/reports/
 
 # --- GitHub Python template ---
 # Byte-compiled / optimized / DLL files

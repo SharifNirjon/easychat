@@ -77,19 +77,23 @@ async def stream_reply(messages: list[dict], usage: Usage) -> AsyncIterator[str]
         extra_body=_openrouter_options(),
     )
     reply_chars = 0
-    async for chunk in response:
-        usage.model = chunk.model or usage.model   # with fallbacks, the model that actually answered
-        if chunk.usage:
-            usage.tokens_in = chunk.usage.prompt_tokens or 0
-            usage.tokens_out = chunk.usage.completion_tokens or 0
-        # Some chunks carry only metadata (usage, finish reason) and no text.
-        if chunk.choices and chunk.choices[0].delta.content:
-            reply_chars += len(chunk.choices[0].delta.content)
-            yield chunk.choices[0].delta.content
-
-    if usage.total == 0:  # provider sent no usage: estimate so budgets still count something
-        usage.tokens_in = sum(estimate_tokens(m["content"]) for m in messages)
-        usage.tokens_out = max(1, reply_chars // 4)
+    try:
+        async for chunk in response:
+            usage.model = chunk.model or usage.model   # with fallbacks, the model that actually answered
+            if chunk.usage:
+                usage.tokens_in = chunk.usage.prompt_tokens or 0
+                usage.tokens_out = chunk.usage.completion_tokens or 0
+            # Some chunks carry only metadata (usage, finish reason) and no text.
+            if chunk.choices and chunk.choices[0].delta.content:
+                reply_chars += len(chunk.choices[0].delta.content)
+                yield chunk.choices[0].delta.content
+    finally:
+        # Also runs when the caller stops early (the output guard closes the stream): close the
+        # connection, and estimate usage if the provider never sent it, so budgets still count it.
+        await response.close()
+        if usage.total == 0:
+            usage.tokens_in = sum(estimate_tokens(m["content"]) for m in messages)
+            usage.tokens_out = max(1, reply_chars // 4)
 
 
 def user_facing_error(exc: Exception) -> str:

@@ -109,13 +109,17 @@ class FakeLLM:
         self.fail_with: Exception | None = None
 
     async def __call__(self, messages, usage):
-        """Record the prompt, then stream the canned reply (or raise `fail_with`)."""
+        """Record the prompt, then stream the canned reply (or raise `fail_with`).
+
+        `reply` is a list of chunks, or a function of the prompt returning one (e.g. to echo the
+        system prompt, like a model that leaks it).
+        """
         self.calls.append(messages)
         if self.fail_with:
             raise self.fail_with
         usage.model = "stub/model"
         usage.tokens_in, usage.tokens_out = 100, 20
-        for chunk in self.reply:
+        for chunk in self.reply(messages) if callable(self.reply) else self.reply:
             yield chunk
 
 

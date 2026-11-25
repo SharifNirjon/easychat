@@ -9,6 +9,7 @@ Multi-tenant AI chatbot SaaS. MVP: "Aria" widget + admin console. See `CLAUDE.md
 | `api/migrations/` | Plain SQL migrations, applied in order by `migrate.py` |
 | `api/seeds/*.json` | Tenant + site key definitions, loaded with `seed_tenant.py` |
 | `api/tests/` | pytest suite (runs against a throwaway database) |
+| `api/guards.py`, `api/evals/` | Guardrails around the model, and the eval suite that measures them |
 | `widget/` | Embeddable chat widget (vanilla TS → one `widget.js` + self-hosted fonts) |
 
 ## Prerequisites
@@ -149,6 +150,38 @@ docker compose run --rm --build api-test      # pytest against easychat_test + R
 cd widget && npm run build                     # typecheck + build + size budget
 ```
 CI (`.github/workflows/ci.yml`) runs the same on every push and pull request.
+
+## 9. Guardrails and evals
+The model is treated as untrusted. What must never happen is prevented structurally (RLS,
+server-side history, blocks built by code); `api/guards.py` adds a second wall:
+- **Input:** hidden characters (zero-width, bidi overrides, Unicode tag "smuggling") are removed
+  before storage; injection-looking messages are *flagged*, not blocked. A flag adds a reminder
+  to the prompt and is stored in `messages.guard_flags`.
+- **Prompt:** numbered rules for scope, honesty about being an AI, no order or customer data, no
+  promises and confidentiality, plus a random per-request canary.
+- **Output:** every reply streams through `OutputGuard`. A leaked canary or prompt wording, an
+  invented order status, unpublished contact details or a foreign link stops the stream, and an SSE
+  `replace` event swaps in a safe reply. The blocked text is never shown in full or stored.
+
+The eval suite (`api/evals/`, 75 cases in 13 categories) runs conversations through the real
+`/chat` pipeline with the real model. It uses two fictional tenants: a shop whose site has example
+policies in blog posts and planted injections, and a rival holding a secret that must never leak.
+```sh
+cd api
+python -m evals.setup                # once: seed the eval tenants and index their fixture sites
+python -m evals.run                  # all cases; exit code 0 = gate passed
+python -m evals.run --only order_data,identity-human   # categories and/or case ids
+python -m evals.run --no-judge       # deterministic checks only (no judge cost)
+```
+- Gate: overall >= 90%, and 100% of the critical data-leak cases (`order_data`,
+  `customer_data`, `cross_tenant`). Each critical case runs 3 times and must pass all 3.
+- Data-leak cases are decided by deterministic checks (`evals/checks.py`); fuzzy criteria use an
+  LLM judge from a different model family (`EVAL_JUDGE_MODEL`, default `google/gemini-3.5-flash`,
+  zero data retention).
+- Needs `PRIVACY_MODE=strict` and the real `CHAT_MODEL`: evaluating the free dev model says
+  nothing about production. A full run costs about $0.05 in OpenRouter credits.
+- Reports go to `api/evals/reports/` (git-ignored). In GitHub: Actions, **Evals**, Run workflow
+  (needs the `OPENROUTER_API_KEY` secret).
 
 ## Config notes
 - `APP_ENV` is required: `local | test | staging | production`. `/docs` is only served in local/test.

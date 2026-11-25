@@ -1,0 +1,65 @@
+name: Evals
+
+# The guardrail eval suite (roadmap step 6) calls the real chat model and the judge, so it costs
+# money and its results vary slightly between runs: it runs on demand, not on every push.
+# Needs the repository secret OPENROUTER_API_KEY.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Categories and/or case ids, comma-separated (empty = all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    name: Guardrail evals (real model)
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: easychat
+          POSTGRES_PASSWORD: easychat   # throwaway CI database
+          POSTGRES_DB: easychat
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U easychat -d easychat"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      APP_ENV: local                    # evals.setup crawls plain-http localhost fixture pages
+      PRIVACY_MODE: strict              # evaluate the production privacy setup and model
+      CHAT_MODEL: openai/gpt-oss-20b
+      REASONING: low
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      DATABASE_URL: postgresql://easychat_api:ci-api-password@127.0.0.1:5432/easychat
+      MIGRATION_DATABASE_URL: postgresql://easychat:easychat@127.0.0.1:5432/easychat
+      REDIS_URL: redis://127.0.0.1:6379/0
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python migrate.py
+      - run: python -m evals.setup
+      - run: python -m evals.run ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: api/evals/reports/

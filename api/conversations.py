@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
 from db import tenant_tx
+from guards import injection_flags
 from limits import LimitExceeded
 from tenancy import Tenant
 
@@ -19,14 +20,17 @@ class Turn:
     """What the reply needs: the conversation id and the recent history to answer."""
     conversation_id: UUID
     history: list[dict]     # [{"role": ..., "content": ...}] oldest first, ends with a user message
+    flags: list[str]        # guards.injection_flags() of the message being answered
 
 
 async def prepare_turn(tenant: Tenant, conversation_id: UUID | None, message: str | None) -> Turn:
     """Store the visitor's message (if any) and return the history to answer.
 
     message=None means "retry": answer the existing history, whose last message must be the
-    visitor's (e.g. the previous reply failed).
+    visitor's (e.g. the previous reply failed). The message must already be cleaned
+    (schemas.ChatRequest does it); its injection flags are stored with it.
     """
+    flags = injection_flags(message) if message is not None else []
     async with tenant_tx(tenant.id) as conn:
         if conversation_id is None:
             if message is None:
@@ -49,8 +53,9 @@ async def prepare_turn(tenant: Tenant, conversation_id: UUID | None, message: st
             if conversation["user_turns"] >= tenant.limits.conversation_user_turns:
                 raise LimitExceeded("This chat has reached its length limit. Please start a new chat.", retry_after=0)
             await conn.execute(
-                "INSERT INTO messages (tenant_id, conversation_id, role, content) VALUES (%s, %s, 'user', %s)",
-                (tenant.id, cid, message),
+                "INSERT INTO messages (tenant_id, conversation_id, role, content, guard_flags) "
+                "VALUES (%s, %s, 'user', %s, %s)",
+                (tenant.id, cid, message, flags or None),
             )
             await conn.execute(
                 "UPDATE conversations SET user_turns = user_turns + 1, last_message_at = now() WHERE id = %s",
@@ -67,7 +72,9 @@ async def prepare_turn(tenant: Tenant, conversation_id: UUID | None, message: st
 
     if not history or history[-1]["role"] != "user":
         raise HTTPException(status_code=409, detail="Nothing to reply to")
-    return Turn(conversation_id=cid, history=history)
+    if message is None:                       # retry: the flags of the stored message being answered
+        flags = injection_flags(history[-1]["content"])
+    return Turn(conversation_id=cid, history=history, flags=flags)
 
 
 async def save_reply(
@@ -78,12 +85,15 @@ async def save_reply(
     tokens_in: int,
     tokens_out: int,
     blocks: list[dict] | None = None,
+    guard_flags: list[str] | None = None,
 ) -> None:
-    """Store the assistant's reply. `blocks` must already have passed blocks.validate_blocks()."""
+    """Store the assistant's reply. `blocks` must already have passed blocks.validate_blocks();
+    `guard_flags` names the output-guard violation if the reply was replaced."""
     async with tenant_tx(tenant.id) as conn:
         await conn.execute(
-            "INSERT INTO messages (tenant_id, conversation_id, role, content, model, tokens_in, tokens_out, blocks) "
-            "VALUES (%s, %s, 'assistant', %s, %s, %s, %s, %s)",
-            (tenant.id, conversation_id, content, model, tokens_in, tokens_out, Jsonb(blocks) if blocks else None),
+            "INSERT INTO messages (tenant_id, conversation_id, role, content, model, tokens_in, tokens_out, blocks, "
+            "guard_flags) VALUES (%s, %s, 'assistant', %s, %s, %s, %s, %s, %s)",
+            (tenant.id, conversation_id, content, model, tokens_in, tokens_out, Jsonb(blocks) if blocks else None,
+             guard_flags or None),
         )
         await conn.execute("UPDATE conversations SET last_message_at = now() WHERE id = %s", (conversation_id,))
