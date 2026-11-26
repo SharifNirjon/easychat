@@ -7,7 +7,7 @@ import { renderButtons, renderChips } from './actions';
 import { renderCardBlock, renderCarousel } from './cards';
 import { renderChoiceList } from './choices';
 import { renderForm } from './form';
-import { renderNotice, renderSources } from './info';
+import { renderNotice, renderSources, renderSummary } from './info';
 import { renderTimeline } from './timeline';
 
 /** Pick the renderer for the block's type; unknown types render nothing. */
@@ -31,6 +31,8 @@ function renderOne(block: Block, onAction: ActionHandler): HTMLElement | null {
       return renderSources(block, onAction);
     case 'notice':
       return renderNotice(block);
+    case 'summary':
+      return renderSummary(block);
     default:
       return null;
   }

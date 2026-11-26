@@ -41,7 +41,28 @@ export interface OnboardingState {
   orders: OrdersConnection | null;
   /** False when this server has no SECRETS_KEY (order tracking can't be connected). */
   orders_available: boolean;
+  /** Where chat-form requests go (step 9): never the webhook's secret. */
+  requests: RequestSettings;
 }
+
+export interface Webhook {
+  url: string;
+  created_at: string;
+  checked_at: string | null;
+}
+
+export interface RequestSettings {
+  notify_email: string | null;     // null: the account's email
+  sends_to: string | null;         // where team emails actually go
+  booking_url: string | null;
+  retention_days: number;
+  leads: boolean;
+  returns: boolean;
+  return_window_days: number;
+  webhook: Webhook | null;
+}
+
+export type RequestSettingsIn = Omit<RequestSettings, 'sends_to' | 'webhook'>;
 
 export interface OrdersConnection {
   kind: 'shopify' | 'api';
@@ -111,6 +132,13 @@ export const api = {
     call<{ orders: OrdersConnection; secret: string }>('PUT', '/api/onboarding/orders/api', { url }),
   testOrder: (order_number: string) => call<OrderTestResult>('POST', '/api/onboarding/orders/test', { order_number }),
   disconnectOrders: () => call<void>('DELETE', '/api/onboarding/orders'),
+  saveRequestSettings: (settings: RequestSettingsIn) =>
+    call<{ requests: RequestSettings }>('PUT', '/api/onboarding/requests/settings', settings),
+  /** The answer's `secret` is shown this once only. */
+  connectWebhook: (url: string) =>
+    call<{ webhook: Webhook; secret: string }>('PUT', '/api/onboarding/requests/webhook', { url }),
+  testWebhook: () => call<{ ok: boolean; detail?: string }>('POST', '/api/onboarding/requests/webhook/test'),
+  disconnectWebhook: () => call<void>('DELETE', '/api/onboarding/requests/webhook'),
 };
 
 /** True while a crawl is waiting for the worker or running. */

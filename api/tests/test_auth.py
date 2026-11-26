@@ -18,13 +18,15 @@ class Outbox:
     def __init__(self):
         """Nothing sent yet; sending works."""
         self.sent: list[tuple[str, str, str]] = []
+        self.reply_to: list[str | None] = []        # each email's Reply-To, in the same order
         self.fail = False
 
-    async def __call__(self, to: str, subject: str, text: str) -> None:
+    async def __call__(self, to: str, subject: str, text: str, reply_to: str | None = None) -> None:
         """Record the email (or fail like an SMTP outage)."""
         if self.fail:
             raise mailer.MailError("down")
         self.sent.append((to, subject, text))
+        self.reply_to.append(reply_to)
 
     def last_token(self) -> str:
         """The token in the most recent sign-in email."""

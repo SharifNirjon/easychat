@@ -40,6 +40,9 @@
       "contact_url": "https://fernwood.example/contact",
       "handoff_label": "Talk to a person",
       "handoff_message": "I want to talk to a person"
+    },
+    "requests": {
+      "notify_email": "team@fernwood.example"
     }
   }
 }

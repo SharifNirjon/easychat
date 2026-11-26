@@ -20,31 +20,33 @@ stored reply says only that the order was shown.
 """
 import asyncio
 import hashlib
-import json
 import logging
 import re
-import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
 import db
+import email_codes
 import limits
 import mailer
+import returns
+from email_codes import CODE_DIGITS, CODE_TTL_SECONDS
 from limits import LimitExceeded
+from models import EMAIL_PATTERN
 from order_connections import source_for
 from order_sources import PROGRESS, Order, OrderSourceError, normalize_email, normalize_order_number
-from secretbox import code_digest, same_digest
+from replies import FormSubmission, ScriptedReply, text_value
 from tenancy import Tenant
+
+__all__ = ["FormSubmission", "ScriptedReply", "OrderTurn", "handle"]   # FormSubmission/ScriptedReply: replies.py
 
 log = logging.getLogger("easychat.orders")
 
 FORM_LOOKUP = "order_lookup"
 FORM_CODE = "order_code"
 FORMS = (FORM_LOOKUP, FORM_CODE)
-CODE_DIGITS = 6
-CODE_TTL_SECONDS = 10 * 60
-CODE_ATTEMPTS = 5
+CODE_PURPOSE = "order"                  # email_codes purpose: a code opens one order in one chat
 ACCESS_TTL_SECONDS = 30 * 60
 
 ASK_TEXT = ("I can check that for you. Enter your order number and the email you used at checkout, "
@@ -71,22 +73,6 @@ _background: set[asyncio.Task] = set()     # code lookups still running (kept re
 
 
 # --- Data ---------------------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class FormSubmission:
-    """A submitted chat form (schemas.FormIn): which form, and its field values."""
-    name: str
-    values: dict[str, str]
-
-
-@dataclass(frozen=True)
-class ScriptedReply:
-    """A reply written by code instead of the model."""
-    text: str
-    blocks: list[dict]
-    stored_text: str | None = None     # kept in the conversation instead of `text`
-    store_blocks: bool = True          # False: the blocks hold order data, so they aren't stored
-
 
 @dataclass(frozen=True)
 class OrderTurn:
@@ -151,7 +137,7 @@ def code_form() -> dict:
 def form_summary(form: FormSubmission) -> str:
     """What the conversation stores for a submitted form: never the email or the code."""
     if form.name == FORM_LOOKUP:
-        number = normalize_order_number(form.values.get("order_number", ""))
+        number = normalize_order_number(text_value(form.values, "order_number"))
         return f"Find order #{number}" if number else "Find my order"
     return "Here's my code"
 
@@ -212,10 +198,14 @@ def timeline_block(order: Order) -> dict:
     return block
 
 
-def order_blocks(order: Order) -> list[dict]:
-    """The verified badge and the card."""
-    return [{"type": "notice", "tone": "success", "text": f"Verified: {mask_email(order.email)}"},
-            timeline_block(order)]
+def order_blocks(order: Order, tenant: Tenant | None = None) -> list[dict]:
+    """The verified badge and the card; a "Start a return" chip if the order can be returned."""
+    blocks = [{"type": "notice", "tone": "success", "text": f"Verified: {mask_email(order.email)}"},
+              timeline_block(order)]
+    returns_config = tenant.config.requests.returns if tenant else None
+    if returns_config and returns.check_returnable(order, returns_config).ok:
+        blocks.append(returns.start_return_chips())
+    return blocks
 
 
 # --- Prompt context for the verified order ------------------------------------------------------
@@ -257,17 +247,7 @@ def order_refs(order: Order) -> frozenset[str]:
     return frozenset(refs)
 
 
-# --- Redis state: pending codes and granted access -----------------------------------------------
-
-def _pending_key(tenant_id: UUID, conversation_id: UUID) -> str:
-    """The code waiting to be entered in this conversation."""
-    return f"orders:pending:{tenant_id}:{conversation_id}"
-
-
-def _attempts_key(tenant_id: UUID, conversation_id: UUID) -> str:
-    """Wrong tries against the pending code (INCR: concurrent guesses are all counted)."""
-    return f"orders:attempts:{tenant_id}:{conversation_id}"
-
+# --- Redis state: granted access (pending codes: email_codes.py) ---------------------------------
 
 def _access_key(tenant_id: UUID, conversation_id: UUID) -> str:
     """The order this conversation has proven it may see."""
@@ -279,15 +259,16 @@ def _order_key(tenant_id: UUID, number: str) -> str:
     return hashlib.sha256(f"{tenant_id}:{number}".encode()).hexdigest()[:24]
 
 
-def _code_context(tenant_id: UUID, conversation_id: UUID, number: str) -> str:
-    """What a code is bound to: it opens this order, in this chat, for this tenant only."""
-    return f"{tenant_id}:{conversation_id}:{number}"
-
-
 async def access_for(tenant_id: UUID, conversation_id: UUID) -> str | None:
     """The order number this conversation may see, if any."""
     raw = await limits.client.get(_access_key(tenant_id, conversation_id))
     return raw.decode() if isinstance(raw, bytes) else raw
+
+
+async def forget(tenant_id: UUID, conversation_id: UUID) -> None:
+    """Drop this conversation's order access and pending code ("delete my data")."""
+    await limits.client.delete(_access_key(tenant_id, conversation_id))
+    await email_codes.forget(CODE_PURPOSE, tenant_id, conversation_id)
 
 
 async def has_connection(tenant_id: UUID) -> bool:
@@ -322,12 +303,8 @@ async def send_code(tenant: Tenant, conversation_id: UUID, number: str, email: s
         if not await limits.allow_order_code(tenant.id, _order_key(tenant.id, number)):
             log.warning("order lookup for tenant %s: code limit reached for an order", tenant.slug)
             return
-        code = f"{secrets.randbelow(10 ** CODE_DIGITS):0{CODE_DIGITS}d}"
-        pending = {"number": number, "digest": code_digest(code, _code_context(tenant.id, conversation_id, number))}
-        async with limits.client.pipeline(transaction=True) as pipe:
-            pipe.set(_pending_key(tenant.id, conversation_id), json.dumps(pending), ex=CODE_TTL_SECONDS)
-            pipe.delete(_attempts_key(tenant.id, conversation_id))
-            await pipe.execute()
+        code = email_codes.new_code()
+        await email_codes.store(CODE_PURPOSE, tenant.id, conversation_id, number, code)
         await mailer.send_email(order.email, f"Your code for order #{number}",
                                 code_email(tenant.config.company_name, number, code))
     except OrderSourceError as exc:
@@ -351,13 +328,13 @@ async def drain() -> None:
     _background.difference_update([task for task in _background if task.done()])
 
 
-async def lookup(tenant: Tenant, conversation_id: UUID, values: dict[str, str], ip: str) -> ScriptedReply:
+async def lookup(tenant: Tenant, conversation_id: UUID, values: dict, ip: str) -> ScriptedReply:
     """Form `order_lookup`: validate, rate-limit, start the background check, ask for the code."""
-    number = normalize_order_number(values.get("order_number", ""))
-    email = normalize_email(values.get("email", ""))
+    number = normalize_order_number(text_value(values, "order_number"))
+    email = normalize_email(text_value(values, "email"))
     if number is None:
         return ScriptedReply(BAD_NUMBER_TEXT, [lookup_form()])
-    if not re.fullmatch(r"[^@\s]{1,64}@[^@\s]{1,189}\.[^@\s.]{2,63}", email):
+    if not re.fullmatch(EMAIL_PATTERN, email):
         return ScriptedReply(BAD_EMAIL_TEXT, [lookup_form(number)])
     try:
         await limits.check_order_lookup(tenant.id, conversation_id, ip)
@@ -369,40 +346,34 @@ async def lookup(tenant: Tenant, conversation_id: UUID, values: dict[str, str], 
 
 # --- Step 3: the code ---------------------------------------------------------------------------
 
-async def verify(tenant: Tenant, conversation_id: UUID, values: dict[str, str]) -> ScriptedReply:
+async def verify(tenant: Tenant, conversation_id: UUID, values: dict) -> ScriptedReply:
     """Form `order_code`: check the code; on success grant access and show the order."""
-    code = values.get("code", "").strip()
-    if not re.fullmatch(rf"\d{{{CODE_DIGITS}}}", code):
+    result = await email_codes.check(CODE_PURPOSE, tenant.id, conversation_id, text_value(values, "code"))
+    if result.outcome == "bad_format":
         return ScriptedReply(BAD_CODE_FORMAT_TEXT, [code_form()])
-    pending_key, attempts_key = _pending_key(tenant.id, conversation_id), _attempts_key(tenant.id, conversation_id)
-    raw = await limits.client.get(pending_key)
-    if raw is None:
+    if result.outcome == "missing":
         return ScriptedReply(NO_CODE_TEXT, [lookup_form()])
-    pending = json.loads(raw)
-    number = pending["number"]
-    expected = code_digest(code, _code_context(tenant.id, conversation_id, number))
-    if not same_digest(expected, pending["digest"]):
-        async with limits.client.pipeline(transaction=True) as pipe:
-            pipe.incr(attempts_key)
-            pipe.expire(attempts_key, CODE_TTL_SECONDS)
-            attempts, _ = await pipe.execute()
-        if int(attempts) >= CODE_ATTEMPTS:
-            await limits.client.delete(pending_key, attempts_key)
-            return ScriptedReply(TOO_MANY_TEXT, [lookup_form(number)])
+    if result.outcome == "too_many":
+        return ScriptedReply(TOO_MANY_TEXT, [lookup_form(result.bound)])
+    if result.outcome == "wrong":
         return ScriptedReply(WRONG_CODE_TEXT, [code_form()])
-    if not await limits.client.delete(pending_key):        # used at the same moment by another request
-        return ScriptedReply(NO_CODE_TEXT, [lookup_form()])
-    await limits.client.delete(attempts_key)
+    number = result.bound
     await limits.client.set(_access_key(tenant.id, conversation_id), number, ex=ACCESS_TTL_SECONDS)
     log.info("order access granted in tenant %s", tenant.slug)
-    order = await _fetch(tenant, number)
+    order = await fetch(tenant, number)
     if order is None:
         return ScriptedReply(UNAVAILABLE_TEXT, [], stored_text=f"Verified the customer for order #{number}.")
-    return ScriptedReply(VERIFIED_TEXT, order_blocks(order),
+    return ScriptedReply(VERIFIED_TEXT, order_blocks(order, tenant),
                          stored_text=f"Showed order #{number} to the verified customer.", store_blocks=False)
 
 
-async def _fetch(tenant: Tenant, number: str) -> Order | None:
+async def verified_order(tenant: Tenant, conversation_id: UUID) -> tuple[str | None, Order | None]:
+    """(the order number this chat verified, that order fresh from the shop or None if unreachable)."""
+    number = await access_for(tenant.id, conversation_id)
+    return number, (await fetch(tenant, number) if number else None)
+
+
+async def fetch(tenant: Tenant, number: str) -> Order | None:
     """The order, fresh from the shop; None if it can't be reached (logged)."""
     try:
         source = await source_for(tenant.id)
@@ -428,7 +399,7 @@ async def handle(tenant: Tenant, conversation_id: UUID, message: str, form: Form
     asked = order_number_in(message)
     granted = await access_for(tenant.id, conversation_id)
     if granted and asked in (None, granted):
-        order = await _fetch(tenant, granted)
+        order = await fetch(tenant, granted)
         if order is not None:
             return OrderTurn(enabled=True, order=order, refs=order_refs(order))
         if looks_like_order_question(message):

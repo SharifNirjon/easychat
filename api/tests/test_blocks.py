@@ -133,3 +133,39 @@ def test_image_host_match_includes_port():
     """The allow-list matches host AND port."""
     assert kept(card(image={"url": "http://localhost:3001/a.svg"}))
     assert not kept(card(image={"url": "http://localhost:9999/a.svg"}))
+
+
+# --- chat forms (step 9) ------------------------------------------------------------------------
+
+def form(*fields: dict, **extra) -> dict:
+    """A submittable form with the given fields."""
+    return {"type": "form", "submit": "lead", "submit_label": "Send", "fields": list(fields), **extra}
+
+
+CHOICE = {"kind": "choice", "name": "items", "label": "Items", "mode": "multi",
+          "options": [{"id": "item_1", "label": "Squalane Day Gel", "detail": "$26.00",
+                       "image": {"url": "https://img.shop.example/gel.png"}}]}
+CONSENT = {"kind": "checkbox", "name": "consent", "required": True,
+           "label": "I agree to Mirela storing the details above to answer this request. They're deleted after 90 days."}
+
+
+def test_choice_fields_consent_boxes_and_summary_cards_are_valid():
+    """Design 7's item list, W-07's consent box (long label, required) and W-08's card."""
+    assert kept(form(CHOICE, CONSENT, privacy_url="https://shop.example/privacy"))
+    assert kept({"type": "summary", "title": "Sent to the Mirela team", "footer": "We reply by email.",
+                 "rows": [{"label": "Name", "value": "Rafiq Hasan"}, {"label": "Summary", "value": "x" * 400}]})
+
+
+@pytest.mark.parametrize("block", [
+    form({**CHOICE, "mode": "some"}),                                                     # unknown mode
+    form({**CHOICE, "options": []}),                                                      # no options
+    form({**CHOICE, "options": [{"id": "Item 1", "label": "x"}]}),                        # bad option id
+    form({**CHOICE, "options": [{"id": "a", "label": "x", "image": {"url": "https://evil.example/x.png"}}]}),
+    form(CHOICE, privacy_url="javascript:alert(1)"),                                      # unsafe link
+    form(CHOICE, submit="send_money"),                                                    # unknown form
+    {"type": "summary", "title": "x", "rows": []},                                        # card without rows
+    {"type": "summary", "title": "x", "rows": [{"label": "a", "value": "x" * 401}]},      # value too long
+])
+def test_invalid_chat_form_blocks_are_dropped(block):
+    """Unknown modes/forms, foreign images and unsafe links never reach the widget."""
+    assert not kept(block)

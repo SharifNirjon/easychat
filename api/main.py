@@ -24,6 +24,8 @@ SSE events sent by /chat:
   replace {"text": "..."}              the output guard blocked the reply: show this text instead of
                                         the tokens so far (then blocks, then done)
   block  {"type": "...", ...}           zero or more UI blocks after the text (validated, see blocks.py)
+  forget {}                             the visitor deleted this conversation ("delete my data", step 9):
+                                        the widget drops its copy and starts fresh next time
   done   {}                             reply finished successfully (and was saved)
   error  {"message": "..."}             something failed; the stream then ends (never hangs)
 
@@ -43,6 +45,11 @@ questions get a lookup form, submitted forms (`form` instead of `message`) get r
 by code (code emailed, then the timeline card), and a conversation that verified an order gives
 the model that order, fenced, while the output guard allows only that order's numbers.
 
+Chat forms (step 9, chat_forms.py): returns, contact / "talk to a person", transcript by email
+and "delete my data" are answered by code too, before order tracking. Requests are stored only
+with consent and delivered by the worker (team_requests.py); onboarding settings are in
+request_settings.py.
+
 In local/test, a message `/demo <name>` replies with sample blocks without calling the model
 (see demo.py).
 """
@@ -61,12 +68,14 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import auth
+import chat_forms
 import conversations
 import db
 import limits
 import onboarding
 import order_connections
 import order_tracking
+import request_settings
 import retrieval
 from blocks import validate_blocks
 from config import settings
@@ -78,9 +87,10 @@ from grounding import (NO_ANSWER_MARKER, MarkerFilter, fallback_blocks, knowledg
 from llm import Usage, stream_reply, user_facing_error
 from middleware import BodySizeLimitMiddleware, RequestContextMiddleware, configure_logging
 from models import normalize_origin
-from order_tracking import FormSubmission, OrderTurn, form_summary, order_prompt_block
+from order_tracking import OrderTurn, order_prompt_block
 from prompts import (ORDERS_LOOKUP, ORDERS_OFF, ORDERS_VERIFIED, PROMPT_FINGERPRINTS, assistant_system_prompt,
                      grounded_system_prompt, injection_reminder, verified_order_section)
+from replies import FormSubmission, ScriptedReply
 from retrieval import Retrieval
 from schemas import ChatRequest
 from tenancy import SITE_KEY_PATTERN, Tenant, resolve_tenant
@@ -129,6 +139,7 @@ app.add_middleware(RequestContextMiddleware)
 app.include_router(auth.router)
 app.include_router(onboarding.router)
 app.include_router(order_connections.router)
+app.include_router(request_settings.router)
 
 # The onboarding app (Preact, built into app/dist by `npm run build` in app/). Same origin as the
 # API, so its session cookie needs no cross-site rules. Not built = not served.
@@ -264,25 +275,35 @@ async def _visible_text(stream: AsyncIterator[str], marker: MarkerFilter,
         await stream.aclose()
 
 
+async def scripted_reply(tenant: Tenant, turn: conversations.Turn, form: FormSubmission | None,
+                         ip: str) -> tuple[ScriptedReply | None, OrderTurn]:
+    """A reply written by code, if this turn gets one: chat forms first (step 9), then order
+    tracking (step 8). Also what order tracking adds to a model turn (the verified order)."""
+    reply = await chat_forms.handle(tenant, turn, form, ip)
+    if reply is not None:
+        return reply, OrderTurn()
+    orders = await order_tracking.handle(tenant, turn.conversation_id, turn.history[-1]["content"], form, ip)
+    return orders.reply, orders
+
+
 async def reply_events(tenant: Tenant, turn: conversations.Turn, form: FormSubmission | None = None,
                        ip: str = "unknown") -> AsyncIterator[str]:
     """Turn a reply into SSE events: meta, tokens, `replace` if the guard blocked the reply,
-    validated blocks, then `done` (or `error`). Order tracking may answer instead of the model."""
+    validated blocks, then `done` (or `error`). Chat forms and order tracking may answer
+    instead of the model."""
     yield sse_event("meta", {"conversation_id": str(turn.conversation_id)})
     usage = Usage()
     embed_tokens = 0
     reply: list[str] = []
     demo = demo_for(tenant, turn)
     marker = MarkerFilter()       # strips the model's "no answer" signal from the visible text
-    guard: OutputGuard | None = None   # demo and order replies are our own text: nothing to guard
+    guard: OutputGuard | None = None   # demo and scripted replies are our own text: nothing to guard
     orders = OrderTurn()
     scripted = None
     try:
         knowledge = None
         if not demo:
-            orders = await order_tracking.handle(tenant, turn.conversation_id, turn.history[-1]["content"],
-                                                 form, ip)
-            scripted = orders.reply
+            scripted, orders = await scripted_reply(tenant, turn, form, ip)
         if demo or scripted:
             text_stream = _as_stream(demo.text if demo else scripted.text)
         else:
@@ -318,7 +339,14 @@ async def reply_events(tenant: Tenant, turn: conversations.Turn, form: FormSubmi
             raw_blocks = await knowledge_blocks(tenant, knowledge, marker.found)
         # Every block is validated here, whatever produced it; invalid ones never leave the server.
         blocks = validate_blocks(raw_blocks, tenant.asset_policy(settings.is_dev))
-        # An order card is shown, not stored: the conversation keeps only a note that it was shown.
+        if scripted and scripted.forget:
+            # "Delete my data": the conversation is gone, so there is nothing to store it in.
+            for block in blocks:
+                yield sse_event("block", block)
+            yield sse_event("forget", {})
+            yield sse_event("done", {})
+            return
+        # Order cards and request cards are shown, not stored: the conversation keeps only a note.
         stored_text = scripted.stored_text if scripted and scripted.stored_text else "".join(reply).strip()
         stored_blocks = blocks if not scripted or scripted.store_blocks else None
         await conversations.save_reply(
@@ -378,9 +406,9 @@ async def chat(body: ChatRequest, request: Request, origin: OriginHeader = None)
     if body.conversation_id is None:
         await limits.count_new_conversation(tenant.id, tenant.limits)
 
-    # A submitted form is stored as a short summary: never the email or the code it carried.
+    # A submitted form is stored as a short summary: never the details or the code it carried.
     form = FormSubmission(body.form.name, body.form.values) if body.form else None
-    message = form_summary(form) if form else body.message
+    message = chat_forms.form_summary(form) if form else body.message
     turn = await conversations.prepare_turn(tenant, body.conversation_id, message)
     return StreamingResponse(
         reply_events(tenant, turn, form, ip),

@@ -3,7 +3,7 @@ from evals.checks import PROMPT_PHRASES, Reply, Transcript, check
 from evals.run import CRITICAL_CATEGORIES, load_cases
 
 KNOWN_EXPECT_KEYS = {"answered", "sources", "blocks_include", "contains_any", "contains_all", "not_contains",
-                     "no_order_claim", "no_contact_details", "status", "only_order_refs"}
+                     "no_order_claim", "no_contact_details", "status", "only_order_refs", "no_promise"}
 
 
 def transcript(*replies: str, blocks: list[dict] | None = None) -> Transcript:

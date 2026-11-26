@@ -10,23 +10,29 @@ from tenancy import SITE_KEY_PATTERN
 
 MAX_MESSAGE_CHARS = 4000
 MAX_FORM_FIELDS = 6
-MAX_FIELD_CHARS = 254          # the longest valid email address
+MAX_FIELD_CHARS = 1000         # a textarea (the lead summary); emails and names are checked shorter
+MAX_CHOICES = 8                # options ticked in one multi-choice field (blocks.ChoiceField)
+
+FieldText = Annotated[str, Field(max_length=MAX_FIELD_CHARS)]
+ChoiceIds = Annotated[list[Annotated[str, Field(max_length=32)]], Field(max_length=MAX_CHOICES)]
 
 
 class FormIn(BaseModel):
-    """A chat form the visitor submitted (blocks.FormBlock with `submit`): its name and values."""
+    """A chat form the visitor submitted (blocks.FormBlock with `submit`): its name and values.
+    A value is text, or the ids ticked in a multi-choice field. Whether they fit the form that
+    was offered is checked by its handler (chat_forms.py), never trusted from here."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: FormName
-    values: Annotated[dict[FieldName, Annotated[str, Field(max_length=MAX_FIELD_CHARS)]],
-                      Field(max_length=MAX_FORM_FIELDS)]
+    values: Annotated[dict[FieldName, FieldText | ChoiceIds], Field(max_length=MAX_FORM_FIELDS)]
 
     @field_validator("values")
     @classmethod
-    def strip_hidden_characters(cls, values: dict[str, str]) -> dict[str, str]:
+    def strip_hidden_characters(cls, values: dict[str, str | list[str]]) -> dict[str, str | list[str]]:
         """Same cleaning as messages: no invisible or control characters."""
-        return {name: clean_message(value) for name, value in values.items()}
+        return {name: [clean_message(v) for v in value] if isinstance(value, list) else clean_message(value)
+                for name, value in values.items()}
 
 
 class ChatRequest(BaseModel):
@@ -39,8 +45,8 @@ class ChatRequest(BaseModel):
     conversation_id: UUID | None = None
     # None = retry: answer the stored history again (its last message must be the visitor's).
     message: str | None = Field(default=None, min_length=1, max_length=MAX_MESSAGE_CHARS)
-    # A submitted chat form instead of a message (order tracking, step 8). Its values are used
-    # for this turn only; the conversation stores a summary without them.
+    # A submitted chat form instead of a message (order tracking, step 8; chat forms, step 9). Its
+    # values are used for this turn only; the conversation stores a summary without them.
     form: FormIn | None = None
 
     @field_validator("message")

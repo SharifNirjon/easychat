@@ -5,7 +5,8 @@
  */
 import { useState } from 'preact/hooks';
 
-import { api, ApiError, type OnboardingState, type OrdersConnection } from '../api';
+import { api, type OnboardingState, type OrdersConnection } from '../api';
+import { Field, useAction } from './shared';
 
 const STATUS_WORDS: Record<string, string> = {
   placed: 'order placed', packed: 'packed', shipped: 'shipped', out_for_delivery: 'out for delivery',
@@ -15,37 +16,6 @@ const STATUS_WORDS: Record<string, string> = {
 interface Props {
   state: OnboardingState;
   onChange: () => void;          // reload the state after connecting or disconnecting
-}
-
-/** Run an API call with a busy flag and a visible error. */
-function useAction() {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await action();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Something went wrong.');
-    } finally {
-      setBusy(false);
-    }
-  };
-  return { busy, error, run };
-}
-
-/** A labelled text input. */
-function Field(props: { label: string; value: string; onInput: (v: string) => void; placeholder?: string;
-  type?: string; autoComplete?: string }) {
-  return (
-    <label class="field">
-      <span>{props.label}</span>
-      <input type={props.type ?? 'text'} required value={props.value} placeholder={props.placeholder}
-        autoComplete={props.autoComplete ?? 'off'} spellcheck={false}
-        onInput={(e) => props.onInput((e.target as HTMLInputElement).value)} />
-    </label>
-  );
 }
 
 function ShopifyForm({ onConnected }: { onConnected: () => void }) {

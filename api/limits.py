@@ -8,6 +8,8 @@ These limits are what actually bound cost:
   * self-serve sign-up (step 7): sign-in emails per address and per IP, new accounts per IP
     and per day platform-wide (SIGNUPS_PER_DAY, which is also the kill switch)
   * order tracking (step 8): lookups per chat and per client, code emails per order, owner tests
+  * chat forms (step 9): requests per chat, client and tenant (daily); transcript codes per chat,
+    client and recipient address
 
 If Redis is unreachable we fail closed (503): an outage must not turn into an unmetered bill.
 """
@@ -164,6 +166,46 @@ async def count_order_test(tenant_id: UUID) -> None:
     hour = _now().strftime("%Y%m%d%H")
     if await _hit(f"rl:order:test:{tenant_id}:{hour}", HOUR) > ORDER_TESTS_PER_TENANT_HOUR:
         raise LimitExceeded("Too many test lookups. Please try again in an hour.", retry_after=HOUR)
+
+
+# --- Chat forms (step 9): requests to the team, transcript emails -------------------------------
+
+REQUESTS_PER_CONVERSATION_HOUR = 3        # returns / contact requests one chat may send per hour
+REQUESTS_PER_IP_HOUR = 5                  # ... and one client, across chats
+TRANSCRIPT_CODES_PER_CONVERSATION_HOUR = 3  # "email me the transcript" codes one chat may ask for
+TRANSCRIPT_CODES_PER_IP_HOUR = 6
+TRANSCRIPT_CODES_PER_ADDRESS_HOUR = 3     # codes one inbox can be sent per hour (it isn't the sender's yet)
+
+
+async def check_request(tenant_id: UUID, conversation_id: UUID, ip: str, limits: TenantLimits) -> None:
+    """Count a request against the chat's, the client's and the tenant's (daily) limits; 429 when over."""
+    hour = _now().strftime("%Y%m%d%H")
+    if await _hit(f"rl:req:conv:{conversation_id}:{hour}", HOUR) > REQUESTS_PER_CONVERSATION_HOUR or \
+            await _hit(f"rl:req:ip:{tenant_id}:{ip}:{hour}", HOUR) > REQUESTS_PER_IP_HOUR:
+        raise LimitExceeded("You've sent several requests already. Please wait an hour, or contact the team "
+                            "directly.", retry_after=HOUR)
+    if await _hit(f"rl:req:tenant:{tenant_id}:{_today()}", DAY) > limits.daily_requests:
+        raise LimitExceeded("The team can't take more requests through the chat today. Please try again "
+                            "tomorrow.", retry_after=DAY)
+
+
+async def check_transcript_code(tenant_id: UUID, conversation_id: UUID, ip: str, address_key: str) -> None:
+    """Count a transcript code email (`address_key`: a hash of the address, not the address)."""
+    hour = _now().strftime("%Y%m%d%H")
+    if await _hit(f"rl:transcript:conv:{conversation_id}:{hour}", HOUR) > TRANSCRIPT_CODES_PER_CONVERSATION_HOUR or \
+            await _hit(f"rl:transcript:ip:{tenant_id}:{ip}:{hour}", HOUR) > TRANSCRIPT_CODES_PER_IP_HOUR or \
+            await _hit(f"rl:transcript:to:{address_key}:{hour}", HOUR) > TRANSCRIPT_CODES_PER_ADDRESS_HOUR:
+        raise LimitExceeded("We've sent several codes already. Please try again in an hour.", retry_after=HOUR)
+
+
+WEBHOOK_TESTS_PER_TENANT_HOUR = 20      # owner's test deliveries from the onboarding app
+
+
+async def count_webhook_test(tenant_id: UUID) -> None:
+    """Count an owner's test webhook delivery; 429 when over."""
+    hour = _now().strftime("%Y%m%d%H")
+    if await _hit(f"rl:webhook:test:{tenant_id}:{hour}", HOUR) > WEBHOOK_TESTS_PER_TENANT_HOUR:
+        raise LimitExceeded("Too many test deliveries. Please try again in an hour.", retry_after=HOUR)
 
 
 def _budget_key(tenant_id: UUID) -> str:

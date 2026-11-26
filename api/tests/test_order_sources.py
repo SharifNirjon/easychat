@@ -224,3 +224,27 @@ def test_order_numbers_are_normalised(raw, expected):
 def test_shop_domains_must_be_myshopify(raw, expected):
     """Only *.myshopify.com hosts are called with Shopify credentials."""
     assert valid_shop_domain(raw) == expected
+
+
+# --- Line items (step 9: return requests) -------------------------------------------------------
+
+def test_api_items_are_read_and_checked():
+    """Titles are single-lined, image links must be https, item_count falls back to the quantities."""
+    order = order_from_api({**MR_20417, "item_count": None, "items": [
+        {"title": "Squalane\nDay Gel", "quantity": 2, "price": "$26.00", "image_url": "http://cdn.example/a.png"},
+        {"title": "Serum"}]})
+    assert [(i.title, i.quantity, i.price, i.image_url) for i in order.items] == [
+        ("Squalane Day Gel", 2, "$26.00", None), ("Serum", 1, None, None)]
+    assert order.item_count == 3
+
+
+def test_shopify_line_items_get_prices_and_images():
+    """Shopify's lineItems become items, with a formatted unit price."""
+    node = {**SHOPIFY_ORDER, "lineItems": {"nodes": [
+        {"name": "Squalane Day Gel", "quantity": 1, "image": {"url": "https://cdn.shopify.example/gel.png"},
+         "originalUnitPriceSet": {"shopMoney": {"amount": "26.0", "currencyCode": "USD"}}},
+        {"name": "Mystery", "quantity": 0, "originalUnitPriceSet": {"shopMoney": {"amount": "x", "currencyCode": "ZZZ"}}},
+        "not an item"]}}
+    order = order_sources.order_from_shopify(node)
+    assert [(i.title, i.quantity, i.price, i.image_url) for i in order.items] == [
+        ("Squalane Day Gel", 1, "$26.00", "https://cdn.shopify.example/gel.png"), ("Mystery", 1, None, None)]

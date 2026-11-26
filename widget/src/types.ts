@@ -50,13 +50,23 @@ export interface WidgetConfig {
 export type Action = { kind: 'send'; text: string } | { kind: 'link'; url: string };
 
 /** Chat forms the server handles (api/blocks.py FormName). */
-export type FormName = 'order_lookup' | 'order_code';
+export type FormName =
+  | 'order_lookup'
+  | 'order_code'
+  | 'return_request'
+  | 'lead'
+  | 'transcript_email'
+  | 'transcript_code'
+  | 'delete_data';
+
+/** A form field's submitted value: text, or the ids ticked in a multi-choice field. */
+export type FormValues = Record<string, string | string[]>;
 
 /** A submitted form. Client-side only, never part of a block; `label` is the visitor's bubble text. */
 export interface FormSubmit {
   kind: 'form';
   form: FormName;
-  values: Record<string, string>;
+  values: FormValues;
   label: string;
 }
 export type Tone = 'info' | 'success' | 'warning' | 'danger';
@@ -99,9 +109,18 @@ export type FormField =
       required?: boolean;
       value?: string;
     }
-  | { kind: 'checkbox'; name: string; label: string }
+  | { kind: 'checkbox'; name: string; label: string; required?: boolean }
   | { kind: 'rating'; name: string; label: string }
-  | { kind: 'tags'; name: string; label: string; options: string[] };
+  | { kind: 'tags'; name: string; label: string; options: string[] }
+  | {
+      kind: 'choice';
+      name: string;
+      label: string;
+      mode: 'single' | 'multi';
+      style?: 'list' | 'chips';
+      options: Choice[];
+      required?: boolean;
+    };
 
 export type Block =
   | { type: 'chips'; items: { label: string; action: Action }[] }
@@ -125,8 +144,16 @@ export type Block =
       footer?: string;
       link?: { kind: 'link'; url: string };
     }
-  | { type: 'form'; title?: string; fields: FormField[]; submit_label: string; submit?: FormName }
+  | {
+      type: 'form';
+      title?: string;
+      fields: FormField[];
+      submit_label: string;
+      submit?: FormName;
+      privacy_url?: string;
+    }
   | { type: 'sources'; items: { title: string; url: string }[] }
-  | { type: 'notice'; tone?: Tone; text: string };
+  | { type: 'notice'; tone?: Tone; text: string }
+  | { type: 'summary'; title: string; rows: { label: string; value: string }[]; footer?: string };
 
 export type ActionHandler = (action: Action | FormSubmit) => void;

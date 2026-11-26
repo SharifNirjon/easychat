@@ -6,7 +6,7 @@ import { type FailureKind, streamChat } from './api';
 import { MAX_DISPLAY_MESSAGES, TEASER_DELAY_MS } from './config';
 import { el } from './dom';
 import { loadState, saveState, type SavedState } from './store';
-import type { Action, Block, ChatMessage, FormName, FormSubmit, WidgetConfig } from './types';
+import type { Action, Block, ChatMessage, FormName, FormSubmit, FormValues, WidgetConfig } from './types';
 import { safeUrl } from './ui/blocks/shared';
 import { createTeaser, Launcher } from './ui/launcher';
 import { Panel } from './ui/panel';
@@ -24,7 +24,7 @@ export class Widget {
   private state: SavedState;
   private inFlight: AbortController | null = null;
   /** A submitted form not yet stored by the server. Memory only: emails and codes are never persisted. */
-  private pendingForm: { name: FormName; values: Record<string, string> } | null = null;
+  private pendingForm: { name: FormName; values: FormValues } | null = null;
 
   constructor(
     private readonly siteKey: string,
@@ -131,6 +131,7 @@ export class Widget {
     this.panel.scrollToBottom();
 
     let reply = '';
+    let forgotten = false; // the server deleted this conversation at the visitor's request
     const blocks: Block[] = [];
     let bubble: ReturnType<typeof list.startReply> | null = null;
 
@@ -162,9 +163,16 @@ export class Widget {
         onBlock: (block) => {
           blocks.push(block); // shown together once the reply is complete
         },
+        onForget: () => {
+          forgotten = true;
+        },
         onDone: () => {
           if (blocks.length) list.addBlocks(blocks);
-          this.remember(blocks.length ? { role: 'assistant', content: reply, blocks } : { role: 'assistant', content: reply });
+          if (forgotten) {
+            this.forgetConversation(reply);
+          } else {
+            this.remember(blocks.length ? { role: 'assistant', content: reply, blocks } : { role: 'assistant', content: reply });
+          }
           this.panel.announce(`${this.config.bot_name}: ${reply}`);
           this.panel.scrollToBottom();
         },
@@ -190,6 +198,19 @@ export class Widget {
     this.state.conversationId = null;
     this.state.unsent = lastUser?.content ?? null;
     this.persist();
+  }
+
+  /**
+   * "Delete my data" went through: the server no longer has this conversation. Keep only the
+   * confirmation on screen; the saved copy and the conversation id go, so the next message
+   * starts a new chat.
+   */
+  private forgetConversation(confirmation: string): void {
+    this.state.conversationId = null;
+    this.state.unsent = null;
+    this.state.messages = [{ role: 'assistant', content: confirmation }];
+    this.persist();
+    this.panel.messages.render(this.state.messages);
   }
 
   /** Show an error row with a Retry button, and announce it to screen readers. */

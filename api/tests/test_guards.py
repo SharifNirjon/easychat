@@ -238,6 +238,34 @@ def test_nothing_is_released_after_a_violation():
 
 def test_safe_replies_exist_for_every_violation():
     """Every violation has visitor-facing replacement text."""
-    for violation in (PROMPT_LEAK, ORDER_CLAIM, UNGROUNDED_CONTACT, UNGROUNDED_LINK):
+    for violation in (PROMPT_LEAK, ORDER_CLAIM, UNGROUNDED_CONTACT, UNGROUNDED_LINK, guards.PROMISE_CLAIM):
         assert guards.safe_reply(violation, "Fernwood")
     assert "Fernwood" in guards.safe_reply(PROMPT_LEAK, "Fernwood")
+
+
+# --- Promises about requests (step 9) ------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    "Good news: your refund has been approved!", "Your return request is accepted.",
+    "I've issued your refund of $26.", "We have refunded your order.", "Your return label has been emailed to you.",
+])
+def test_promise_claims_are_detected(text):
+    """Only the team decides on returns: the assistant can't say one was approved or a label sent."""
+    assert guards.promise_claims(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Refunds are issued within 5 business days of approval.", "Once your return is approved, we email a label.",
+    "If your refund is approved, it goes back to your card.", "The team will review your return request.",
+])
+def test_refund_policy_is_not_a_promise(text):
+    """Policy text and conditions are fine."""
+    assert guards.promise_claims(text) == []
+
+
+def test_a_promise_stops_the_reply():
+    """An invented approval is replaced by the safe reply, which points to the team."""
+    guard = make_guard()
+    stream(guard, ["Sure! Your refund ", "has been approved and is on its way."])
+    assert guard.violation == guards.PROMISE_CLAIM
+    assert "can't approve returns or refunds" in guards.safe_reply(guards.PROMISE_CLAIM, "Fernwood")

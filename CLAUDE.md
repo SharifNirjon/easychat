@@ -49,7 +49,7 @@ We dogfood on Culpine first; no Culpine-specific logic may be hardcoded — ever
 | 6 | Guardrails + eval set (50+ Qs incl. off-topic, injection, "are you human?", order-data leakage) | eval ≥ 90%; 100% on data-leak cases | built, judged gate pending (baseline 75%, 11/16 critical → deterministic 75/75, critical 16/16 ×3; full judged run blocked by OpenRouter credits) |
 | 7 | Self-serve onboarding: magic link → URL or sitemap upload → auto branding → crawl progress → preview → copy script tag → "installed ✓"; free-plan caps | new tenant from email to working widget in < 5 min, no staff | done (onboarding_check.py: 20.3 s email → installed, real API + worker + Mailpit + model) |
 | 8 | Commerce: Shopify connect + generic order-lookup API; order tracking with email OTP (widget design 6) | verified visitor sees timeline; wrong code/email reveals nothing | done (order_check.py 6/6 live; evals order_tracking 11/11 ×3, deterministic; Shopify only against a fake: no dev store) |
-| 9 | Chat forms (fixed set): return request (design 7), lead capture with consent (W-07, W-08), talk to a person, email transcript, delete my data | requests reach shop/team by email + webhook; nothing saved without consent | todo |
+| 9 | Chat forms (fixed set): return request (design 7), lead capture with consent (W-07, W-08), talk to a person, email transcript, delete my data | requests reach shop/team by email + webhook; nothing saved without consent | done (requests_check.py 5/5 live; evals requests 8/10 ×3, 2 not run: OpenRouter credits) |
 | 10 | Admin v0: inbox, leads, KB, settings/install (A-01, A-04, A-05, A-06) | team reads chats, exports leads, edits + publishes KB | todo |
 | 11 | Files + voice (W-05, W-06, mic) | scanned, parsed, answered; bad types rejected | todo |
 | 12 | Multilingual/RTL, chat menu, limit UI (W-11, W-12, W-14) | matches designs | todo |
@@ -83,6 +83,15 @@ never stored (the conversation keeps a note). Shop credentials are AES-GCM seale
 (`secretbox.py`, `SECRETS_KEY`) in `order_connections`. Chat forms are sent as `form` on `/chat`
 and stored as summaries (never emails or codes); step 9 reuses this for its fixed form set.
 
+Chat-form notes (step 9): `chat_forms.py` answers form intents in code before order tracking.
+Every offered form is remembered in Redis per conversation (with its options); submissions must
+match it. Requests (`return|lead|handoff`) are stored only with the consent box ticked, with the
+consent wording and an expiry (purged hourly by the worker via `purge_expired_requests()`);
+the job holds ids only; `team_requests.deliver` emails the team and POSTs an HMAC-signed webhook.
+Returns are requests (no store writes, no amounts); guard `promise_claim` stops invented approvals.
+One-time codes for any purpose live in `email_codes.py` (orders, transcript).
+
 Data-model notes: `schema_migrations` is the only table without `tenant_id` (infrastructure, not
-tenant data). The API connects as a non-owner role so RLS always applies; only `resolve_site_key()`
-(SECURITY DEFINER) reads across tenants, and only for the exact key it is given.
+tenant data). The API connects as a non-owner role so RLS always applies. SECURITY DEFINER
+functions are the only cross-tenant paths, each narrow: `resolve_site_key()` (the exact key given),
+`resolve_login()` / `create_signup()` (one email), `purge_expired_requests()` (deletes expired rows only).

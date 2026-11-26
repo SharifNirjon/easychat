@@ -213,20 +213,35 @@ class TimelineBlock(Strict):
 
 
 class TextField(Strict):
-    """A one-line text, email, multi-line (textarea) or one-time-code field, optionally pre-filled."""
+    """A one-line text, email, multi-line (textarea) or one-time-code field, optionally pre-filled
+    (a textarea with up to MAX_FIELD_CHARS, e.g. the lead form's editable summary)."""
     kind: Literal["text", "email", "textarea", "code"]
     name: FieldName
     label: Label
     placeholder: Annotated[str, Field(max_length=80)] = ""
     required: bool = False
-    value: Annotated[str, Field(max_length=80)] | None = None
+    value: Annotated[str, Field(max_length=1000)] | None = None
 
 
 class CheckboxField(Strict):
-    """A single yes/no checkbox ("Also tell me about new launches")."""
+    """A single yes/no checkbox: "Also tell me about new launches", or a consent box (W-07)
+    whose `required` means the form can't be sent unticked (the server checks again)."""
     kind: Literal["checkbox"]
     name: FieldName
-    label: Line
+    label: Paragraph
+    required: bool = False
+
+
+class ChoiceField(Strict):
+    """Pick one (single) or several (multi) options inside a form (design 7): items with a
+    thumbnail as a list, short reasons as chips. Submitted as option ids."""
+    kind: Literal["choice"]
+    name: FieldName
+    label: Label
+    mode: Literal["single", "multi"]
+    style: Literal["list", "chips"] = "list"
+    options: Annotated[list[Choice], Field(min_length=1, max_length=8)]
+    required: bool = False
 
 
 class RatingField(Strict):
@@ -244,21 +259,38 @@ class TagsField(Strict):
     options: Annotated[list[Label], Field(min_length=1, max_length=8)]
 
 
-FormField = Annotated[TextField | CheckboxField | RatingField | TagsField, Field(discriminator="kind")]
+FormField = Annotated[TextField | CheckboxField | RatingField | TagsField | ChoiceField,
+                      Field(discriminator="kind")]
 
 
-# Forms the server knows how to handle (order_tracking.py). A form without `submit` is shown but
-# can't be sent yet (the fixed set of chat forms arrives in roadmap step 9).
-FormName = Literal["order_lookup", "order_code"]
+# The fixed set of forms the server handles: order tracking (order_tracking.py, step 8) and the
+# chat forms (chat_forms.py, step 9). A form without `submit` is shown but can't be sent.
+FormName = Literal["order_lookup", "order_code", "return_request", "lead", "transcript_email", "transcript_code",
+                   "delete_data"]
 
 
 class FormBlock(Strict):
-    """A small form (designs 6, 8, 10). With `submit`, the widget sends its values to /chat."""
+    """A small form (designs 6, 7, 8, 10, W-07). With `submit`, the widget sends its values to /chat."""
     type: Literal["form"]
     title: Line | None = None
     fields: Annotated[list[FormField], Field(min_length=1, max_length=6)]
     submit_label: Label
     submit: FormName | None = None
+    privacy_url: LinkUrl | None = None      # "Privacy policy" link under a consent box
+
+
+class SummaryRow(Strict):
+    """One line of a summary card: a label and its value."""
+    label: Label
+    value: Paragraph
+
+
+class SummaryBlock(Strict):
+    """A confirmation card (W-08 "Sent to the team"): a title and label/value rows."""
+    type: Literal["summary"]
+    title: Line
+    rows: Annotated[list[SummaryRow], Field(min_length=1, max_length=8)]
+    footer: Line | None = None
 
 
 class Source(Strict):
@@ -282,7 +314,7 @@ class NoticeBlock(Strict):
 
 Block = Annotated[
     ChipsBlock | ButtonsBlock | CardBlock | CarouselBlock | ChoiceListBlock | TimelineBlock
-    | FormBlock | SourcesBlock | NoticeBlock,
+    | FormBlock | SourcesBlock | NoticeBlock | SummaryBlock,
     Field(discriminator="type"),
 ]
 _block_adapter: TypeAdapter[Block] = TypeAdapter(Block)

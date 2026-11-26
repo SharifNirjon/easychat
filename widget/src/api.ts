@@ -1,6 +1,6 @@
 /** Talks to the easychat API: tenant config + streamed chat replies (SSE over fetch). */
 import { API_BASE } from './config';
-import type { Block, FormName, WidgetConfig } from './types';
+import type { Block, FormName, FormValues, WidgetConfig } from './types';
 
 const NETWORK_ERROR = "I couldn't reach the server. Check your connection and try again.";
 const INTERRUPTED_ERROR = 'The reply was interrupted. Please try again.';
@@ -26,6 +26,8 @@ export interface StreamHandlers {
   onReplace(text: string): void;
   /** A UI block (already validated by the server). Arrives after the text, before `done`. */
   onBlock(block: Block): void;
+  /** The visitor deleted this conversation ("delete my data"): drop the local copy too. */
+  onForget(): void;
   onDone(): void;
   onError(message: string, kind: FailureKind): void;
 }
@@ -35,8 +37,8 @@ export interface ChatTurn {
   conversationId: string | null;
   /** null = retry: ask the server to answer the history it already has. */
   message: string | null;
-  /** A submitted chat form, sent instead of a message (order tracking). */
-  form?: { name: FormName; values: Record<string, string> } | null;
+  /** A submitted chat form, sent instead of a message (order tracking, chat forms). */
+  form?: { name: FormName; values: FormValues } | null;
 }
 
 interface SseEvent {
@@ -124,6 +126,8 @@ export async function streamChat(turn: ChatTurn, handlers: StreamHandlers, signa
           handlers.onReplace(data.text);
         } else if (parsed.event === 'block' && parsed.data && typeof parsed.data === 'object') {
           handlers.onBlock(parsed.data as Block);
+        } else if (parsed.event === 'forget') {
+          handlers.onForget();
         } else if (parsed.event === 'done') {
           handlers.onDone();
           return;

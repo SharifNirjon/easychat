@@ -3,7 +3,10 @@
     cd api && python worker.py          # keep it running next to the API
 
 Jobs:
-  crawl  {tenant_id, crawl_job_id}  index the tenant's website (onboarding and "crawl again")
+  crawl            {tenant_id, crawl_job_id}  index the tenant's website (onboarding and "crawl again")
+  deliver_request  {tenant_id, request_id}    email a chat-form request to the team + webhook (step 9)
+
+Between jobs, once an hour, expired requests are deleted (retention, team_requests.purge_expired).
 
 One worker process is enough for the MVP (see jobs.py on crash recovery). Each job runs with
 the API's database role inside the tenant's RLS scope, exactly like a request.
@@ -16,6 +19,7 @@ import redis.asyncio as aioredis
 
 import db
 import limits
+import team_requests
 from config import settings
 from crawler import CrawlError, run_crawl
 from jobs import Job, RedisQueue
@@ -27,6 +31,7 @@ log = logging.getLogger("easychat.worker")
 POLL_SECONDS = 5                  # how long one wait for a job blocks (then it loops)
 RETRY_PAUSE_SECONDS = 10          # pause after a failed job before it is retried
 REDIS_RETRY_SECONDS = 3           # pause before polling again when Redis is unreachable
+PURGE_INTERVAL_SECONDS = 3600     # how often expired requests are deleted
 
 
 async def crawl_job(payload: dict) -> None:
@@ -47,7 +52,12 @@ async def crawl_job(payload: dict) -> None:
     log.info("crawl done for tenant %s: %d indexed, %d failed", tenant_id, stats.pages_indexed, stats.pages_failed)
 
 
-HANDLERS = {"crawl": crawl_job}
+async def deliver_request_job(payload: dict) -> None:
+    """Deliver one chat-form request (raises to be retried if the email or webhook failed)."""
+    await team_requests.deliver(UUID(payload["tenant_id"]), UUID(payload["request_id"]))
+
+
+HANDLERS = {"crawl": crawl_job, team_requests.DELIVER_JOB: deliver_request_job}
 
 
 async def run_one(queue: RedisQueue, job: Job, raw: str) -> None:
@@ -80,6 +90,19 @@ async def poll_once(queue: RedisQueue) -> None:
         await asyncio.sleep(REDIS_RETRY_SECONDS)
 
 
+async def purge_if_due(last_run: float) -> float:
+    """Run the retention purge if PURGE_INTERVAL_SECONDS have passed; returns when it last ran.
+    A failure is logged and tried again at the next interval (never kills the worker)."""
+    now = asyncio.get_running_loop().time()
+    if now - last_run < PURGE_INTERVAL_SECONDS:
+        return last_run
+    try:
+        await team_requests.purge_expired()
+    except Exception:
+        log.exception("retention purge failed")
+    return now
+
+
 async def main() -> None:
     """Recover a crashed worker's jobs, then process jobs until stopped (Ctrl+C)."""
     configure_logging()
@@ -90,7 +113,9 @@ async def main() -> None:
     try:
         recovered = await queue.recover()
         log.info("worker ready%s", f" ({recovered} unfinished jobs requeued)" if recovered else "")
+        last_purge = -float(PURGE_INTERVAL_SECONDS)          # purge once at start
         while True:
+            last_purge = await purge_if_due(last_purge)
             await poll_once(queue)
     finally:
         await db.close_pool()

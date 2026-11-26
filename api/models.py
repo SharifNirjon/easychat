@@ -16,7 +16,7 @@ ORIGIN_PATTERN = r"^https?://[a-z0-9.-]+(:[0-9]{1,5})?$"   # scheme://host[:port
 HOST_PATTERN = r"^[a-z0-9.-]+(:[0-9]{1,5})?$"              # host[:port], lowercase, no scheme
 
 # TenantConfig fields the widget never receives (see tenancy.Tenant.public_config).
-SERVER_ONLY_FIELDS = frozenset({"image_hosts", "knowledge", "fallback"})
+SERVER_ONLY_FIELDS = frozenset({"image_hosts", "knowledge", "fallback", "requests"})
 
 
 def normalize_origin(origin: str) -> str:
@@ -120,6 +120,47 @@ class Fallback(BaseModel):
     handoff_message: str | None = Field(default=None, min_length=1, max_length=200)
 
 
+EMAIL_PATTERN = r"^[^@\s]{1,64}@[^@\s]{1,189}\.[^@\s.]{2,63}$"
+DEFAULT_RETURN_REASONS = ["Didn't suit me", "Arrived damaged", "Wrong item", "Changed my mind"]
+
+
+class RefundOption(BaseModel):
+    """One way the customer would like to be refunded (a preference: the team decides)."""
+    label: str = Field(min_length=1, max_length=60)
+    detail: str = Field(default="", max_length=80)
+
+
+def _default_refund_options() -> list[RefundOption]:
+    """Design 7's choices, without amounts (amounts would be promises)."""
+    return [RefundOption(label="Store credit", detail="Usually the fastest"),
+            RefundOption(label="Original payment", detail="Back to how you paid"),
+            RefundOption(label="Exchange for another product", detail="The team will ask which one")]
+
+
+class ReturnsConfig(BaseModel):
+    """Return requests in the chat (design 7): sent to the team, never written to the store."""
+    window_days: int = Field(default=30, ge=1, le=365)        # days after delivery a return can be asked for
+    reasons: list[str] = Field(default_factory=lambda: list(DEFAULT_RETURN_REASONS), min_length=1, max_length=6)
+    refund_options: list[RefundOption] = Field(default_factory=_default_refund_options, min_length=1, max_length=4)
+
+    @field_validator("reasons")
+    @classmethod
+    def reasons_are_short(cls, reasons: list[str]) -> list[str]:
+        """Each reason is a chip label: 1-40 characters."""
+        if any(not 1 <= len(reason) <= 40 for reason in reasons):
+            raise ValueError("each reason must be 1-40 characters")
+        return reasons
+
+
+class RequestsConfig(BaseModel):
+    """Chat forms (roadmap step 9): where requests go and how long they are kept. Server-only."""
+    notify_email: str | None = Field(default=None, pattern=EMAIL_PATTERN, max_length=254)  # None: the owner's
+    booking_url: HttpsUrl | None = None                         # "Book a call" (W-10), if the team has one
+    retention_days: int = Field(default=90, ge=7, le=365)       # requests are deleted after this
+    leads: bool = True                                          # contact form + "talk to a person"
+    returns: ReturnsConfig | None = Field(default_factory=ReturnsConfig)   # None: no return requests
+
+
 class TenantConfig(BaseModel):
     """Everything the widget may see about a tenant, plus SERVER_ONLY_FIELDS, which it never gets.
     Stored in tenants.config."""
@@ -135,6 +176,7 @@ class TenantConfig(BaseModel):
     image_hosts: list[str] = Field(default_factory=list, max_length=10)
     knowledge: KnowledgeConfig | None = None   # server-only: what crawl.py indexes
     fallback: Fallback | None = None           # server-only: offered when there's no answer
+    requests: RequestsConfig = Field(default_factory=RequestsConfig)   # server-only: chat forms (step 9)
 
     @field_validator("image_hosts")
     @classmethod
@@ -155,6 +197,7 @@ class TenantLimits(BaseModel):
     conversation_user_turns: int = Field(default=40, gt=0)
     max_pages: int = Field(default=50, gt=0, le=MAX_CRAWL_PAGES)     # pages per crawl
     daily_crawls: int = Field(default=3, gt=0)                       # crawls started per day
+    daily_requests: int = Field(default=50, gt=0)                    # chat-form requests sent per day
 
 
 class TenantSeed(BaseModel):

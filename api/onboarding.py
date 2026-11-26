@@ -9,6 +9,7 @@ and every query runs inside db.tenant_tx(), so RLS confines it to that tenant.
   POST /api/onboarding/sitemap    raw sitemap XML upload (instead of / after the URL)
   PUT  /api/onboarding/assistant  the owner's edits: names, texts, colours
   POST /api/onboarding/crawl      crawl again (free plan: limits.daily_crawls per day)
+  (order tracking: order_connections.py, step 8; where requests go: request_settings.py, step 9)
 
 Ownership of a website is proven by installing the widget on it: a site key only works from its
 allowed origins (the owner's site, plus the app itself for the preview), so anyone may *preview*
@@ -29,6 +30,7 @@ import crawler
 import db
 import limits
 import order_connections
+import request_settings
 from auth import Session, current_session, same_origin
 from blocks import LOCAL_HOSTS
 from branding import (DEFAULT_BOT_NAME, accent_for, assistant_config, name_from_host, normalize_hex,
@@ -110,6 +112,7 @@ async def _state(session: Session) -> dict:
                    "crawls_left_today": await limits.crawls_left(session.tenant_id, plan)},
         "orders": await order_connections.summary(session.tenant_id),      # step 8; never credentials
         "orders_available": settings.secrets_key is not None,
+        "requests": await request_settings.summary(session.tenant_id, config),   # step 9; never secrets
     }
 
 

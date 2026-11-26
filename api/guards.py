@@ -22,6 +22,8 @@ Output side (while the reply streams):
     ungrounded_contact   an email or phone number that isn't in the knowledge, the tenant's
                          config or the conversation: invented or planted contact details
     ungrounded_link      a link to a host that isn't the tenant's own
+    promise_claim        "your refund has been approved", "I've issued a refund", "your return
+                         label was sent": the team decides on requests (step 9), never the model
 """
 import re
 import secrets
@@ -34,6 +36,7 @@ PROMPT_LEAK = "prompt_leak"
 ORDER_CLAIM = "order_claim"
 UNGROUNDED_CONTACT = "ungrounded_contact"
 UNGROUNDED_LINK = "ungrounded_link"
+PROMISE_CLAIM = "promise_claim"
 
 # What the visitor sees instead of a blocked reply ({company} = the tenant's company name).
 SAFE_REPLIES = {
@@ -42,6 +45,8 @@ SAFE_REPLIES = {
                  "Our team can check it for you.",
     UNGROUNDED_CONTACT: "Sorry, I don't have verified details for that. Our team can help.",
     UNGROUNDED_LINK: "Sorry, I don't have a verified link for that. Our team can help.",
+    PROMISE_CLAIM: "I can't approve returns or refunds myself: the {company} team decides, and they'll reply "
+                   "by email. If you haven't sent a request yet, tell me you'd like to start a return.",
 }
 
 
@@ -119,6 +124,16 @@ _ORDER_NUMBER_STATUS = re.compile(r"\border\s*(?:number\s*)?#\s*[A-Z0-9-]{3,}\s+
 _TRACKING = re.compile(r"\btracking\s+(?:number|code|id|no\.?)\s*(?:is|:)\s*[A-Z0-9]{6,}", re.IGNORECASE)
 _LOOKED_UP = re.compile(r"\b(I|we)(?:'ve| have)?\s+(?:just\s+)?(checked|looked up|found|located|tracked|pulled up)\s+"
                         r"(?:on\s+)?(your|the)\s+(order|package|parcel|shipment|account)\b", re.IGNORECASE)
+# Decisions only the team makes (step 9): approving a return or refund, or sending a return label.
+# Possessive or first-person only ("your refund", "I've refunded"): policy text ("refunds are issued
+# within 5 days") stays allowed, and conditions ("once your return is approved") are skipped below.
+_PROMISE = re.compile(
+    r"\byour\s+(?:return|refund|exchange|replacement)(?:\s+request)?\s+(?:has\s+been|is|was|got)\s+(?:now\s+|already\s+)?"
+    r"(?:approved|accepted|confirmed|granted|processed|issued|complete[d]?)\b"
+    r"|\b(?:I|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+)?(?:approved|issued|processed|refunded|credited)\s+"
+    r"(?:your|the|a|you)\b"
+    r"|\byour\s+(?:return|shipping|prepaid)\s+label\s+(?:has\s+been|is|was)\s+(?:now\s+|already\s+)?"
+    r"(?:sent|emailed|created|attached|on\s+its\s+way|ready)\b", re.IGNORECASE)
 # A status inside a condition ("once your order has shipped, you'll get an email") is policy, not a claim.
 _CONDITIONAL = re.compile(r"\b(once|when|after|if|as soon as|until|before|whenever|unless)\b", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"[.!?\n]")
@@ -174,6 +189,13 @@ def order_claims(text: str) -> list[str]:
             if pattern is _LOOKED_UP or not _CONDITIONAL.search(_sentence_around(text, match.start(), match.end())):
                 found.append(match.group(0))
     return found
+
+
+def promise_claims(text: str) -> list[str]:
+    """Statements that a return or refund was approved or a label sent (conditions excluded)."""
+    text = plain_punctuation(text)
+    return [m.group(0) for m in _PROMISE.finditer(text)
+            if not _CONDITIONAL.search(_sentence_around(text, m.start(), m.end()))]
 
 
 def _digits(text: str) -> str:
@@ -250,6 +272,8 @@ class OutputGuard:
                 return ORDER_CLAIM
         elif any(not self._ref_allowed(r, final) for r in order_references(text)):
             return ORDER_CLAIM
+        if promise_claims(text):
+            return PROMISE_CLAIM
         # Mid-stream, a half-written email is still a substring of the real one, so this holds.
         if any(e not in self.allowed_text for e in emails(text)):
             return UNGROUNDED_CONTACT

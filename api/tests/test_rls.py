@@ -88,11 +88,21 @@ def test_tenant_cannot_update_another_tenants_rows(app_db, owner_db, two_convers
     assert cur.rowcount == 0
 
 
-def test_api_role_cannot_delete_or_change_tenants(app_db, owner_db):
-    """The API's role has no DELETE on messages."""
+def test_api_role_cannot_delete_tenants(app_db, owner_db):
+    """The API's role can't delete tenants (or their site keys)."""
     as_tenant(app_db, tenant_ids(owner_db)["tenant-a"])
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        app_db.execute("DELETE FROM messages")
+        app_db.execute("DELETE FROM tenants")
+
+
+def test_delete_my_data_only_reaches_the_current_tenant(app_db, owner_db, two_conversations):
+    """Since step 9 the API may delete conversations ("delete my data"), but RLS confines even an
+    unfiltered DELETE to the current tenant: the other tenant's chat survives."""
+    as_tenant(app_db, tenant_ids(owner_db)["tenant-a"])
+    assert app_db.execute("DELETE FROM conversations").rowcount == 1
+    app_db.commit()
+    left = [r[0] for r in owner_db.execute("SELECT content FROM messages")]
+    assert left == ["private to tenant-b"]
 
 
 def test_message_cannot_point_at_another_tenants_conversation(owner_db, two_conversations):
@@ -162,3 +172,45 @@ def test_order_connections_are_isolated_per_tenant(app_db, owner_db):
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         app_db.execute("INSERT INTO order_connections (tenant_id, kind, endpoint, credentials) "
                        "VALUES (%s, 'api', 'https://x.example/x', 'x')", (ids["tenant-b"],))
+
+
+# --- chat-form requests (step 9) ----------------------------------------------------------------
+
+def test_requests_and_webhooks_are_isolated_per_tenant(app_db, owner_db, two_conversations):
+    """A tenant sees, changes and deletes only its own requests and webhook; it can't file a
+    request for another tenant, or attach one to another tenant's conversation."""
+    ids = tenant_ids(owner_db)
+    owner_db.execute("INSERT INTO requests (tenant_id, conversation_id, kind, payload, consent_text, expires_at) "
+                     "VALUES (%s, %s, 'lead', '{\"email\": \"b@b.example\"}', 'ok', now() + interval '1 day')",
+                     (ids["tenant-b"], two_conversations["tenant-b"]))
+    owner_db.execute("INSERT INTO request_webhooks (tenant_id, url, secret) VALUES (%s, 'https://b.example/hook', "
+                     "'sealed')", (ids["tenant-b"],))
+    assert app_db.execute("SELECT count(*) FROM requests").fetchone()[0] == 0          # no tenant set
+    as_tenant(app_db, ids["tenant-a"])
+    for table in ("requests", "request_webhooks"):
+        assert app_db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+        assert app_db.execute(f"DELETE FROM {table}").rowcount == 0
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        app_db.execute("INSERT INTO requests (tenant_id, kind, payload, consent_text, expires_at) "
+                       "VALUES (%s, 'lead', '{}', 'ok', now())", (ids["tenant-b"],))
+
+
+def test_a_request_cannot_point_at_another_tenants_conversation(owner_db, two_conversations):
+    """The composite FK keeps a request inside its tenant, even for the owner."""
+    ids = tenant_ids(owner_db)
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        owner_db.execute("INSERT INTO requests (tenant_id, conversation_id, kind, payload, consent_text, expires_at) "
+                         "VALUES (%s, %s, 'lead', '{}', 'ok', now())", (ids["tenant-a"], two_conversations["tenant-b"]))
+
+
+def test_purge_deletes_only_expired_requests(app_db, owner_db):
+    """Retention: the purge function (callable by the API's role) removes every tenant's expired
+    requests and nothing else."""
+    ids = tenant_ids(owner_db)
+    for slug, expires in (("tenant-a", "now() - interval '1 minute'"), ("tenant-b", "now() - interval '1 day'"),
+                          ("tenant-a", "now() + interval '1 day'")):
+        owner_db.execute("INSERT INTO requests (tenant_id, kind, payload, consent_text, expires_at) "
+                         f"VALUES (%s, 'lead', '{{}}', 'ok', {expires})", (ids[slug],))
+    assert app_db.execute("SELECT purge_expired_requests()").fetchone()[0] == 2
+    app_db.commit()
+    assert owner_db.execute("SELECT count(*) FROM requests").fetchone()[0] == 1

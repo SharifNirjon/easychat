@@ -24,7 +24,8 @@ DEFAULT_EMAIL = "customer@mirela.example"
 
 
 def demo_orders(email: str) -> dict[str, dict]:
-    """Three orders in different states, dated relative to now (design 6 is MR-20417)."""
+    """Three orders in different states, dated relative to now (design 6 is MR-20417; MR-20388 was
+    delivered 6 days ago, so it can be returned: design 7)."""
     now = datetime.now(UTC).replace(microsecond=0)
     day = timedelta(days=1)
 
@@ -41,13 +42,17 @@ def demo_orders(email: str) -> dict[str, dict]:
                                 {"status": "packed", "at": at(-2 * day, 15)},
                                 {"status": "shipped", "at": at(-day, 8), "location": "Dhaka hub"},
                                 {"status": "out_for_delivery", "at": at(timedelta(), 9, 12)}],
-                     "estimated_delivery": at(timedelta(), 18), "carrier": carrier},
+                     "estimated_delivery": at(timedelta(), 18), "carrier": carrier,
+                     "items": [{"title": "Squalane Day Gel", "quantity": 1, "price": "$26.00"},
+                               {"title": "Brightening Vitamin C Serum", "quantity": 1, "price": "$12.00"}]},
         "MR-20388": {"order_number": "MR-20388", "email": email, "status": "delivered",
                      "placed_at": at(-9 * day, 11), "item_count": 1,
                      "events": [{"status": "placed", "at": at(-9 * day, 11)},
                                 {"status": "shipped", "at": at(-8 * day, 9)},
                                 {"status": "delivered", "at": at(-6 * day, 14, 30)}],
-                     "carrier": {**carrier, "tracking_number": "PTH-87102"}},
+                     "carrier": {**carrier, "tracking_number": "PTH-87102"},
+                     "items": [{"title": "Squalane Day Gel", "quantity": 1, "price": "$26.00"},
+                               {"title": "Brightening Vitamin C Serum", "quantity": 2, "price": "$12.00"}]},
         "MR-20311": {"order_number": "MR-20311", "email": email, "status": "cancelled",
                      "placed_at": at(-12 * day, 16), "item_count": 3},
     }

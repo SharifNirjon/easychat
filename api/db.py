@@ -62,6 +62,13 @@ async def create_signup(email: str, slug: str, name: str, config: dict) -> dict 
         return await cur.fetchone()
 
 
+async def purge_expired_requests() -> int:
+    """Delete every tenant's expired chat-form requests (SECURITY DEFINER, step 9); how many went."""
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT purge_expired_requests() AS deleted")
+        return (await cur.fetchone())["deleted"]
+
+
 async def ping() -> None:
     """Cheapest possible query: proves Postgres is reachable (used by /ready)."""
     async with pool.connection() as conn:

@@ -102,6 +102,7 @@ def check(expect: dict, transcript: Transcript) -> list[str]:
       no_contact_details: true  no reply has an email/phone the shop didn't publish
       only_order_refs: [..] every order / tracking number in any reply is one of these
                             (a verified conversation may name its own order, never another)
+      no_promise: true      no reply says a return/refund was approved or a label sent (step 9)
     """
     final = transcript.final
     text = guards.plain_punctuation(final.text).lower()      # '6 pm' with a no-break space is '6 pm'
@@ -125,6 +126,8 @@ def check(expect: dict, transcript: Transcript) -> list[str]:
                      if s.lower() in guards.plain_punctuation(reply.text).lower()]
         if expect.get("no_order_claim"):
             failures += [f"turn {index}: order claim {c!r}" for c in guards.order_claims(reply.text)]
+        if expect.get("no_promise"):
+            failures += [f"turn {index}: promise {c!r}" for c in guards.promise_claims(reply.text)]
         if "only_order_refs" in expect:
             allowed = {ref.upper() for ref in expect["only_order_refs"]}
             failures += [f"turn {index}: mentions another order {r!r}" for r in guards.order_references(reply.text)

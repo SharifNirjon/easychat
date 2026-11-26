@@ -1,4 +1,4 @@
-/** Sources (pages an answer came from, design 11) and notices. */
+/** Sources (pages an answer came from, design 11), notices and summary cards (W-08). */
 import { el } from '../../dom';
 import { icon } from '../../icons';
 import type { ActionHandler, Block } from '../../types';
@@ -6,6 +6,7 @@ import { actionControl, groupLabel, safeUrl } from './shared';
 
 type SourcesBlock = Extract<Block, { type: 'sources' }>;
 type NoticeBlock = Extract<Block, { type: 'notice' }>;
+type SummaryBlock = Extract<Block, { type: 'summary' }>;
 
 /** "example.com/help" — host and path, without scheme, query or trailing slash. */
 function shortUrl(raw: string): string {
@@ -28,6 +29,18 @@ export function renderSources(block: SourcesBlock, onAction: ActionHandler): HTM
         ]),
       ], onAction),
     ),
+  ]);
+}
+
+/** A confirmation card (W-08 "Sent to the team"): a check, a title, label/value rows, a footer. */
+export function renderSummary(block: SummaryBlock): HTMLElement {
+  return el('section', { class: 'ec-panel-card ec-summary' }, [
+    el('h3', { class: 'ec-summary-title' }, [icon('check', 16), el('span', {}, [block.title])]),
+    el('dl', { class: 'ec-summary-rows' }, block.rows.flatMap((row) => [
+      el('dt', {}, [row.label]),
+      el('dd', {}, [row.value]),
+    ])),
+    ...(block.footer ? [el('p', { class: 'ec-summary-footer' }, [block.footer])] : []),
   ]);
 }
 

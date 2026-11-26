@@ -1,6 +1,7 @@
 """Thin wrapper around the OpenRouter chat API.
 
-`stream_reply` yields plain text chunks and raises on failure; `user_facing_error`
+`stream_reply` yields plain text chunks and raises on failure; `complete` returns one short
+non-streamed answer (chat_forms' summary draft); `user_facing_error`
 turns any exception into a safe message for the visitor (no internals, no secrets).
 """
 import logging
@@ -94,6 +95,26 @@ async def stream_reply(messages: list[dict], usage: Usage) -> AsyncIterator[str]
         if usage.total == 0:
             usage.tokens_in = sum(estimate_tokens(m["content"]) for m in messages)
             usage.tokens_out = max(1, reply_chars // 4)
+
+
+async def complete(messages: list[dict], usage: Usage, max_tokens: int) -> str:
+    """One short non-streamed answer (e.g. the lead form's summary draft), recording usage.
+    Same model, fallbacks and privacy settings as chat replies. Raises on any API error."""
+    response = await _client.chat.completions.create(
+        model=settings.chat_model,
+        messages=messages,
+        max_tokens=max_tokens,
+        extra_body=_openrouter_options(),
+    )
+    usage.model = response.model or usage.model
+    text = (response.choices[0].message.content or "") if response.choices else ""
+    if response.usage:
+        usage.tokens_in = response.usage.prompt_tokens or 0
+        usage.tokens_out = response.usage.completion_tokens or 0
+    else:
+        usage.tokens_in = sum(estimate_tokens(m["content"]) for m in messages)
+        usage.tokens_out = estimate_tokens(text)
+    return text
 
 
 def user_facing_error(exc: Exception) -> str:

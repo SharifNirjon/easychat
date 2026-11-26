@@ -20,11 +20,14 @@ class MailError(RuntimeError):
     """The email could not be handed to the SMTP server."""
 
 
-def _send_now(to: str, subject: str, text: str) -> None:
-    """Blocking SMTP send (run in a thread by send_email)."""
+def _send_now(to: str, subject: str, text: str, reply_to: str | None = None) -> None:
+    """Blocking SMTP send (run in a thread by send_email). The email package refuses header
+    values with line breaks, so a visitor-supplied Reply-To can't inject headers."""
     message = EmailMessage()
     message["From"] = settings.mail_from
     message["To"] = to
+    if reply_to:
+        message["Reply-To"] = reply_to
     message["Subject"] = subject
     message.set_content(text)
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
@@ -34,10 +37,11 @@ def _send_now(to: str, subject: str, text: str) -> None:
         smtp.send_message(message)
 
 
-async def send_email(to: str, subject: str, text: str) -> None:
-    """Send one plain-text email. Raises MailError (details are logged, never shown)."""
+async def send_email(to: str, subject: str, text: str, reply_to: str | None = None) -> None:
+    """Send one plain-text email (optionally with a Reply-To, e.g. the visitor for team emails).
+    Raises MailError (details are logged, never shown)."""
     try:
-        await asyncio.to_thread(_send_now, to, subject, text)
-    except (OSError, smtplib.SMTPException) as exc:
+        await asyncio.to_thread(_send_now, to, subject, text, reply_to)
+    except (OSError, smtplib.SMTPException, ValueError) as exc:
         log.error("email not sent: %s", type(exc).__name__)
         raise MailError("could not send email") from exc

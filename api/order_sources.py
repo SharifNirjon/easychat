@@ -65,6 +65,18 @@ class Milestone:
     detail: str | None = None
 
 
+MAX_ITEMS = 20                           # line items kept per order (the return form shows up to 8)
+
+
+@dataclass(frozen=True)
+class OrderItem:
+    """One line of an order, for the return form (design 7). Never given to the model."""
+    title: str
+    quantity: int = 1
+    price: str | None = None                      # preformatted by the shop or us, e.g. "$26.00"
+    image_url: str | None = None                  # https only; blocks.py checks the host again
+
+
 @dataclass(frozen=True)
 class Order:
     """One order, as every source reports it. `email` is used only to verify the visitor; it
@@ -79,6 +91,13 @@ class Order:
     carrier: str | None = None
     tracking_number: str | None = None
     tracking_url: str | None = None
+    items: tuple[OrderItem, ...] = ()
+
+    @property
+    def delivered_at(self) -> datetime | None:
+        """When it was delivered, if the shop said."""
+        delivered = self.milestones.get("delivered")
+        return delivered.at if delivered else None
 
 
 class OrderSource(Protocol):
@@ -136,6 +155,14 @@ class ApiCarrier(_Lenient):
     tracking_url: Annotated[str, Field(max_length=500)] | None = None
 
 
+class ApiItem(_Lenient):
+    """One line of the order (optional; used for return requests)."""
+    title: Annotated[str, Field(min_length=1, max_length=120)]
+    quantity: Annotated[int, Field(ge=1, le=1000)] = 1
+    price: Annotated[str, Field(min_length=1, max_length=20)] | None = None      # as the shop shows it: "$26"
+    image_url: Annotated[str, Field(max_length=500)] | None = None
+
+
 class ApiOrder(_Lenient):
     """What GET {url}?order_number=... must return (200), or 404 when there's no such order."""
     order_number: Annotated[str, Field(min_length=1, max_length=40)]
@@ -146,6 +173,7 @@ class ApiOrder(_Lenient):
     events: Annotated[list[ApiEvent], Field(max_length=20)] = []
     estimated_delivery: datetime | None = None
     carrier: ApiCarrier | None = None
+    items: Annotated[list[ApiItem], Field(max_length=100)] = []
 
 
 def https_link(url: str | None) -> str | None:
@@ -170,10 +198,13 @@ def order_from_api(data: dict) -> Order:
     if api.placed_at and "placed" not in milestones:
         milestones["placed"] = Milestone(api.placed_at)
     carrier = api.carrier or ApiCarrier()
+    items = tuple(OrderItem(" ".join(i.title.split()), i.quantity, i.price, https_link(i.image_url))
+                  for i in api.items[:MAX_ITEMS])
+    item_count = api.item_count if api.item_count is not None else (sum(i.quantity for i in items) or None)
     return Order(number=number, email=normalize_email(api.email), status=api.status, placed_at=api.placed_at,
-                 item_count=api.item_count, milestones=milestones, estimated_delivery=api.estimated_delivery,
+                 item_count=item_count, milestones=milestones, estimated_delivery=api.estimated_delivery,
                  carrier=carrier.name, tracking_number=carrier.tracking_number,
-                 tracking_url=https_link(carrier.tracking_url))
+                 tracking_url=https_link(carrier.tracking_url), items=items)
 
 
 @dataclass(frozen=True)
@@ -224,9 +255,14 @@ query OrderByName($query: String!) {
         displayStatus createdAt inTransitAt deliveredAt estimatedDeliveryAt
         trackingInfo(first: 1) { company number url }
       }
+      lineItems(first: 20) {
+        nodes { name quantity image { url } originalUnitPriceSet { shopMoney { amount currencyCode } } }
+      }
     }
   }
 }"""
+
+CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£", "BDT": "৳", "INR": "₹", "JPY": "¥", "CAD": "CA$", "AUD": "A$"}
 
 # Shopify's fulfillment display statuses -> our progress steps.
 _SHOPIFY_FULFILLMENT = {
@@ -254,6 +290,35 @@ def _text(value: object, limit: int) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return " ".join(value.split())[:limit]
+
+
+def _shopify_price(money: object) -> str | None:
+    """{'shopMoney': {'amount': '26.0', 'currencyCode': 'USD'}} -> '$26.00' (or '26.00 XYZ')."""
+    shop_money = money.get("shopMoney") if isinstance(money, dict) else None
+    if not isinstance(shop_money, dict):
+        return None
+    try:
+        amount = f"{float(shop_money.get('amount')):,.2f}"
+    except (TypeError, ValueError):
+        return None
+    code = str(shop_money.get("currencyCode") or "")[:3]
+    symbol = CURRENCY_SYMBOLS.get(code)
+    return (f"{symbol}{amount}" if symbol else f"{amount} {code}".strip())[:20]
+
+
+def _shopify_items(node: dict) -> tuple[OrderItem, ...]:
+    """The order's line items (name, quantity, unit price, image)."""
+    items = []
+    for line in ((node.get("lineItems") or {}).get("nodes") or [])[:MAX_ITEMS]:
+        if not isinstance(line, dict) or not (title := _text(line.get("name"), 120)):
+            continue
+        quantity = line.get("quantity")
+        image = line.get("image") if isinstance(line.get("image"), dict) else {}
+        url = image.get("url")
+        items.append(OrderItem(title, quantity if isinstance(quantity, int) and quantity > 0 else 1,
+                               _shopify_price(line.get("originalUnitPriceSet")),
+                               https_link(url if isinstance(url, str) else None)))
+    return tuple(items)
 
 
 def order_from_shopify(node: dict) -> Order:
@@ -285,6 +350,7 @@ def order_from_shopify(node: dict) -> Order:
         estimated_delivery=_time(latest.get("estimatedDeliveryAt")) if latest else None,
         carrier=_text(tracking.get("company"), 80), tracking_number=_text(tracking.get("number"), 40),
         tracking_url=https_link(tracking.get("url") if isinstance(tracking.get("url"), str) else None),
+        items=_shopify_items(node),
     )
 
 

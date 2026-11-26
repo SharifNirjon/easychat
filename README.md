@@ -14,6 +14,7 @@ Multi-tenant AI chatbot SaaS. MVP: "Aria" widget + admin console. See `CLAUDE.md
 | `app/` | Onboarding web app (Preact), served by the API at `/app/` |
 | `api/auth.py`, `api/onboarding.py`, `api/worker.py` | Self-serve sign-up, onboarding API, background worker |
 | `api/order_*.py`, `api/secretbox.py` | Order tracking: Shopify / generic order API, email codes, encrypted credentials |
+| `api/chat_forms.py`, `api/team_requests.py`, `api/returns.py` | Chat forms: returns, contact / handoff, transcript, delete my data; delivery by email + webhook |
 
 ## Prerequisites
 Docker Desktop, Node 20+, curl. Python 3.12 is optional — everything Python also runs in Docker.
@@ -237,16 +238,51 @@ code by email, and sees the tracking card (widget design 6). Nobody sees an orde
      "placed_at": "2026-10-28T10:00:00+06:00", "item_count": 2,
      "events": [{"status": "shipped", "at": "2026-10-30T08:00:00+06:00", "location": "Dhaka hub"}],
      "estimated_delivery": "2026-10-31T18:00:00+06:00",
-     "carrier": {"name": "Pathao Courier", "tracking_number": "PTH-88213", "tracking_url": "https://..."}}
+     "carrier": {"name": "Pathao Courier", "tracking_number": "PTH-88213", "tracking_url": "https://..."},
+     "items": [{"title": "Squalane Day Gel", "quantity": 1, "price": "$26.00", "image_url": "https://..."}]}
     ```
     `status` (and each event's) is one of `placed packed shipped out_for_delivery delivered`
-    (`cancelled` for the order). No redirects are followed.
+    (`cancelled` for the order). `items` is optional: it lets customers pick items in a return
+    request (section 12). No redirects are followed.
 - **Local demo** (the fictional Mirela shop): choose "My own system", enter
   `http://127.0.0.1:8790/orders`, then run `python demo_shop.py --secret <the secret> --email <your
   email>` in `api/`. In the widget (`try.html?key=…`) ask "Where is my order #MR-20417?"; the code
   arrives in Mailpit. MR-20388 is delivered, MR-20311 cancelled.
 - **End-to-end check** (the step 8 "Done when"), against the running API and Mailpit:
   `python order_check.py` (`--skip-chat` without OpenRouter credits).
+
+## 12. Chat forms (requests to the team)
+A fixed set of forms, answered by code (not the model) when a visitor asks for them:
+
+| The visitor says | They get |
+|---|---|
+| "I want to return …" | the return form for the order verified in this chat (design 7); the order check first if none. Only delivered orders within the return window |
+| "Can I talk to a person?" | the contact form as a handoff (W-10), plus "Book a call" if a booking page is set |
+| "Can someone contact me?", "I'd like a quote" | the contact form (W-07) with a short summary to check and edit |
+| "Email me this chat" | a code to that address first; then the transcript (nothing stored) |
+| "Delete my data" | a confirmation; then this chat, its messages and its requests are deleted |
+
+- **Consent:** return and contact forms end with a required consent box naming the company and
+  the retention period. Unticked means nothing is stored or sent (checked on the server). The exact
+  wording is stored with each request. Requests are deleted after the retention period (default
+  90 days, by the worker), or at once with "delete my data".
+- **Only what was offered:** the server remembers each form it showed in that chat (30 minutes),
+  so a submission can't pick another order's items or a form that was never offered.
+- **Delivery** (the worker, job `deliver_request`): an email to the team (Reply-To: the customer)
+  and, if set, a webhook. Returns are *requests*: nothing is changed in the store, no label is
+  created, no refund amount is promised. The output guard stops replies that claim an approval.
+- **Settings:** the app's **Requests & privacy** step: team email (default: the account's), booking
+  link, retention, which forms, and the webhook.
+- **Webhook contract:** `POST` with JSON
+  `{"event": "request.created", "id", "kind": "return|lead|handoff", "created_at", "data": {...},
+  "consent": {"text", "given_at"}}` and the header
+  `X-Easychat-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>." + raw body)>`. Check the
+  signature with the secret shown once in the app, reject `t` older than 5 minutes, answer 2xx,
+  and dedupe by `id` (failed deliveries are retried). "Send a test" posts `event: webhook.test`.
+- **Limits:** 3 requests per chat and 5 per client per hour, 50 per tenant per day (free plan);
+  transcript codes: 3 per chat, 6 per client and 3 per address per hour.
+- **End-to-end check** (the step 9 "Done when"), against the running API, worker and Mailpit:
+  `python requests_check.py` (runs its own webhook receiver on port 8791; needs no model credits).
 
 ## Config notes
 - `APP_ENV` is required: `local | test | staging | production`. `/docs` is only served in local/test.
