@@ -216,6 +216,13 @@ class Fetcher:
         parser = self._robots[key]
         return parser is None or parser.can_fetch(USER_AGENT, url)
 
+    async def robots_sitemaps(self, url: str) -> list[str]:
+        """The `Sitemap:` URLs in the robots.txt of the URL's site (onboarding finds sitemaps here)."""
+        await self.allowed_by_robots(url)              # reads and caches robots.txt
+        parts = urlsplit(url)
+        parser = self._robots[f"{parts.scheme}://{parts.netloc}"]
+        return list(parser.site_maps() or []) if parser else []
+
     async def _request(self, url: str, max_bytes: int) -> tuple[int, dict[str, str], bytes]:
         """One GET without redirects: status, headers and a size-capped body."""
         assert self._pool is not None, "use Fetcher as an async context manager"

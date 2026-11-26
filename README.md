@@ -11,6 +11,8 @@ Multi-tenant AI chatbot SaaS. MVP: "Aria" widget + admin console. See `CLAUDE.md
 | `api/tests/` | pytest suite (runs against a throwaway database) |
 | `api/guards.py`, `api/evals/` | Guardrails around the model, and the eval suite that measures them |
 | `widget/` | Embeddable chat widget (vanilla TS → one `widget.js` + self-hosted fonts) |
+| `app/` | Onboarding web app (Preact), served by the API at `/app/` |
+| `api/auth.py`, `api/onboarding.py`, `api/worker.py` | Self-serve sign-up, onboarding API, background worker |
 
 ## Prerequisites
 Docker Desktop, Node 20+, curl. Python 3.12 is optional — everything Python also runs in Docker.
@@ -183,6 +185,32 @@ python -m evals.run --no-judge       # deterministic checks only (no judge cost)
 - Reports go to `api/evals/reports/` (git-ignored). In GitHub: Actions, **Evals**, Run workflow
   (needs the `OPENROUTER_API_KEY` secret).
 
+## 10. Self-serve onboarding
+A shop owner goes from their email to a live widget alone: sign-in link, website, branding,
+crawl, preview, script tag, "Installed ✓". Run four things:
+```sh
+docker compose up -d                       # Postgres, Redis, Mailpit (sign-in emails land at :8025)
+cd api && python migrate.py
+python serve_local.py                      # the API, and the app at http://localhost:8000/app/
+python worker.py                           # second terminal: runs crawls in the background
+cd app && npm install && npm run build     # build the app once (npm run dev = rebuild on change)
+```
+Then open **http://localhost:8000/app/** (use `localhost`, as in `APP_BASE_URL`: the cookie
+and the widget preview are tied to that origin), enter any email, and open the link in Mailpit.
+- **A local website to onboard:** with the widget dev server running on 3001
+  (`$env:DEMO_PORT=3001; npm run dev` in `widget/`), enter `http://localhost:3001/mirela/sitemap.xml`.
+  The Install step links to `http://localhost:3001/try.html?key=…`, a page on that site carrying the
+  tag. Opening it turns the app to **Installed ✓**.
+- **Timed end-to-end check** (the step 7 "Done when"), against the running API, worker and Mailpit:
+  `python onboarding_check.py` (add `--skip-chat` without OpenRouter credits).
+- Free-plan caps: 50 pages per crawl, 3 crawls per day, 300 conversations per month, 200k tokens
+  per day, 3 sign-ups per network per day, `SIGNUPS_PER_DAY` platform-wide.
+- Ownership is proven by installation: a site key only works on its owner's origins (plus the app,
+  for the preview), so an assistant can be previewed for any site but only goes live where the owner
+  can paste the tag.
+- In Docker: `docker compose --profile api up --build api worker`. The API image doesn't contain
+  the built app yet (step 14 hosts it), so use the local API for `/app/`.
+
 ## Config notes
 - `APP_ENV` is required: `local | test | staging | production`. `/docs` is only served in local/test.
 - `PRIVACY_MODE` defaults to `strict`: `{"data_collection":"deny","zdr":true,"sort":"latency"}`.
@@ -197,3 +225,5 @@ python -m evals.run --no-judge       # deterministic checks only (no judge cost)
 - `TRUSTED_PROXY_HOPS`: number of proxies in front of the API that append to `X-Forwarded-For`
   (0 locally). Set it correctly per deployment or clients can spoof their IP past the rate limit.
 - `VITE_API_BASE` (widget/.env) is baked into `widget.js` at build time.
+- Onboarding: `APP_BASE_URL` (the app's address; https outside local/test), `WIDGET_URL` (put in
+  script tags), `SMTP_*` + `MAIL_FROM` (Mailpit locally), `SIGNUPS_PER_DAY` (kill switch).

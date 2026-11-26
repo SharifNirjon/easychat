@@ -99,13 +99,15 @@ class KnowledgeConfig(BaseModel):
     sitemaps: list[CrawlUrl] = Field(default_factory=list, max_length=5)
     # Pages to index as-is; with no sitemap, the crawler also follows their same-site links.
     start_urls: list[CrawlUrl] = Field(default_factory=list, max_length=20)
+    # Exact pages from an uploaded sitemap file (onboarding): indexed as-is, links not followed.
+    page_urls: list[CrawlUrl] = Field(default_factory=list, max_length=MAX_CRAWL_PAGES)
     max_pages: int = Field(default=200, ge=1, le=MAX_CRAWL_PAGES)
 
     @model_validator(mode="after")
     def has_a_source(self) -> "KnowledgeConfig":
-        """There must be something to crawl: a sitemap or a start URL."""
-        if not self.sitemaps and not self.start_urls:
-            raise ValueError("give at least one sitemap or start URL")
+        """There must be something to crawl: a sitemap, a start URL or a page list."""
+        if not self.sitemaps and not self.start_urls and not self.page_urls:
+            raise ValueError("give at least one sitemap, start URL or page URL")
         return self
 
 
@@ -146,10 +148,13 @@ class TenantConfig(BaseModel):
 
 
 class TenantLimits(BaseModel):
-    """Free-plan defaults. A tenant's tenants.limits JSON overrides individual fields."""
-    daily_tokens: int = Field(default=1_000_000, gt=0)
+    """Free-plan caps (the only plan for now). A tenant's tenants.limits JSON overrides
+    individual fields; seeded tenants set their own."""
+    daily_tokens: int = Field(default=200_000, gt=0)
     monthly_conversations: int = Field(default=300, gt=0)
     conversation_user_turns: int = Field(default=40, gt=0)
+    max_pages: int = Field(default=50, gt=0, le=MAX_CRAWL_PAGES)     # pages per crawl
+    daily_crawls: int = Field(default=3, gt=0)                       # crawls started per day
 
 
 class TenantSeed(BaseModel):

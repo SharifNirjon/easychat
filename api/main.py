@@ -5,9 +5,12 @@ Routes:
   GET  /ready               -> {"ok": true} | 503       readiness (Postgres + Redis)
   GET  /config?key=<pk_..>  -> public widget config for that site key
   POST /chat                -> Server-Sent Events stream of the assistant's reply
+  /api/auth/*, /api/onboarding/*  -> self-serve sign-up and onboarding (step 7: auth.py, onboarding.py)
+  /app/                     -> the onboarding web app (app/dist, built from app/), if built
 
 /config and /chat resolve the tenant from the public site key and require the browser's
-Origin to be in that key's allowed_origins (403 otherwise).
+Origin to be in that key's allowed_origins (403 otherwise). The first /config call from a
+tenant's own website (not the onboarding preview) marks the widget installed (step 7).
 
 POST /chat body: {"site_key", "conversation_id"?, "message"?}  (see schemas.ChatRequest)
 Errors before streaming starts are plain JSON {"detail": ...} with 4xx/5xx status:
@@ -42,16 +45,20 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
+import auth
 import conversations
 import db
 import limits
+import onboarding
 import retrieval
 from blocks import validate_blocks
 from config import settings
@@ -62,6 +69,7 @@ from grounding import (NO_ANSWER_MARKER, MarkerFilter, fallback_blocks, knowledg
                        sources_block)
 from llm import Usage, stream_reply, user_facing_error
 from middleware import BodySizeLimitMiddleware, RequestContextMiddleware, configure_logging
+from models import normalize_origin
 from prompts import PROMPT_FINGERPRINTS, assistant_system_prompt, grounded_system_prompt, injection_reminder
 from retrieval import Retrieval
 from schemas import ChatRequest
@@ -103,8 +111,24 @@ app.add_middleware(
     allow_headers=["Content-Type"],
     expose_headers=["Retry-After", "X-Request-ID"],
 )
-app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes,
+                   overrides={onboarding.SITEMAP_UPLOAD_PATH: onboarding.SITEMAP_UPLOAD_MAX_BYTES})
 app.add_middleware(RequestContextMiddleware)
+
+app.include_router(auth.router)
+app.include_router(onboarding.router)
+
+# The onboarding app (Preact, built into app/dist by `npm run build` in app/). Same origin as the
+# API, so its session cookie needs no cross-site rules. Not built = not served.
+APP_DIST = Path(__file__).resolve().parent.parent / "app" / "dist"
+if APP_DIST.is_dir():
+    app.mount("/app", StaticFiles(directory=APP_DIST, html=True), name="app")
+
+
+@app.get("/app", include_in_schema=False)
+def app_without_slash() -> RedirectResponse:
+    """/app -> /app/ (so the app's relative asset URLs resolve)."""
+    return RedirectResponse("/app/")
 
 OriginHeader = Annotated[str | None, Header(alias="origin")]
 
@@ -170,21 +194,6 @@ async def knowledge_blocks(tenant: Tenant, knowledge: Retrieval | None, no_answe
     product_ids = list(dict.fromkeys(h.product_id for h in knowledge.hits if h.product_id))
     rows = await retrieval.products_for(tenant.id, product_ids)
     return product_blocks(rows, tenant.asset_policy(settings.is_dev)) + sources_block(knowledge.hits)
-
-
-def client_ip(request: Request) -> str:
-    """The visitor's IP for rate limiting.
-
-    Each trusted proxy appends the address it received the request from to X-Forwarded-For,
-    so the real client is the Nth entry from the right; anything further left is client-supplied
-    and may be forged. With no trusted proxies, use the socket peer.
-    """
-    hops = settings.trusted_proxy_hops
-    if hops > 0:
-        forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
-        if len(forwarded) >= hops:
-            return forwarded[-hops]
-    return request.client.host if request.client else "unknown"
 
 
 def _in_background(coro) -> None:
@@ -315,6 +324,7 @@ async def widget_config(
 ) -> dict:
     """The tenant's public widget config, for an allowed Origin only."""
     tenant = await resolve_tenant(key, origin)
+    await onboarding.mark_installed(tenant, normalize_origin(origin or ""))
     return tenant.public_config()
 
 
@@ -324,7 +334,7 @@ async def chat(body: ChatRequest, request: Request, origin: OriginHeader = None)
     tenant = await resolve_tenant(body.site_key, origin)
 
     # Cheapest checks first; all of them happen before any model call.
-    await limits.check_ip(client_ip(request))
+    await limits.check_ip(limits.client_ip(request))
     await limits.check_token_budget(tenant.id, tenant.limits)
     if body.conversation_id is None:
         await limits.count_new_conversation(tenant.id, tenant.limits)

@@ -113,3 +113,36 @@ def test_resolve_site_key_ignores_revoked_keys(app_db, owner_db):
         assert app_db.execute("SELECT * FROM resolve_site_key(%s)", (KEY_A,)).fetchone() is None
     finally:
         owner_db.execute("UPDATE site_keys SET revoked_at = NULL WHERE public_key = %s", (KEY_A,))
+
+
+# --- users (step 7) -------------------------------------------------------------------------
+
+@pytest.fixture
+def two_users(owner_db):
+    """One user per test tenant, inserted as owner."""
+    ids = tenant_ids(owner_db)
+    for slug in ("tenant-a", "tenant-b"):
+        owner_db.execute("INSERT INTO users (tenant_id, email) VALUES (%s, %s)", (ids[slug], f"owner@{slug}.example"))
+    yield ids
+    owner_db.execute("DELETE FROM users WHERE email LIKE 'owner@tenant-%'")
+
+
+def test_users_are_isolated_per_tenant(app_db, two_users):
+    """A tenant sees only its own users; with no tenant set, none."""
+    assert app_db.execute("SELECT count(*) FROM users").fetchone()[0] == 0
+    as_tenant(app_db, two_users["tenant-a"])
+    assert [r[0] for r in app_db.execute("SELECT email FROM users")] == ["owner@tenant-a.example"]
+
+
+def test_resolve_login_returns_only_the_exact_email(app_db, two_users):
+    """The pre-tenant login lookup answers for exactly one address, case-insensitively, and nothing else."""
+    row = app_db.execute("SELECT tenant_id FROM resolve_login('OWNER@tenant-b.example')").fetchone()
+    assert str(row[0]) == two_users["tenant-b"]
+    assert app_db.execute("SELECT * FROM resolve_login('%')").fetchone() is None
+
+
+def test_api_role_cannot_create_users_or_tenants_directly(app_db, two_users):
+    """Accounts are only created through create_signup(); the API role can't insert them."""
+    as_tenant(app_db, two_users["tenant-a"])
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        app_db.execute("INSERT INTO users (tenant_id, email) VALUES (%s, 'x@y.example')", (two_users["tenant-a"],))

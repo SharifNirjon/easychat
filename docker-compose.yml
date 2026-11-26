@@ -39,7 +39,23 @@ services:
       DATABASE_URL: postgresql://easychat_api:local-api-password@db:5432/easychat
       MIGRATION_DATABASE_URL: postgresql://easychat:easychat@db:5432/easychat
       REDIS_URL: redis://redis:6379/0
+      SMTP_HOST: mailpit
     ports: ["127.0.0.1:8000:8080"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  # The background worker (crawls for self-serve onboarding), same image as the API:
+  #   docker compose --profile api up --build api worker
+  worker:
+    profiles: ["api"]
+    build: { context: ./api, target: runtime }
+    command: ["python", "worker.py"]
+    env_file: api/.env
+    environment:
+      DATABASE_URL: postgresql://easychat_api:local-api-password@db:5432/easychat
+      REDIS_URL: redis://redis:6379/0
+      SMTP_HOST: mailpit
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }

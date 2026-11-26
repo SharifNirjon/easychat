@@ -81,7 +81,7 @@ async def discover(fetcher: Fetcher, knowledge: KnowledgeConfig) -> list[str]:
         if _is_page_url(clean):
             found.setdefault(clean, None)
 
-    for url in knowledge.start_urls:
+    for url in (*knowledge.page_urls, *knowledge.start_urls):
         add(str(url))
     pending = [str(url) for url in knowledge.sitemaps]
     read = 0
@@ -107,9 +107,21 @@ async def discover(fetcher: Fetcher, knowledge: KnowledgeConfig) -> list[str]:
 
 # --- Storage ------------------------------------------------------------------------------------
 
-async def _start_job(tenant_id: UUID) -> UUID:
-    """Create the crawl_jobs row that tracks this run; return its id."""
+async def queue_job(tenant_id: UUID) -> UUID:
+    """Create a crawl_jobs row in 'queued' state (onboarding shows it while the worker is busy)."""
     async with db.tenant_tx(tenant_id) as conn:
+        cur = await conn.execute("INSERT INTO crawl_jobs (tenant_id, status) VALUES (%s, 'queued') RETURNING id",
+                                 (tenant_id,))
+        return (await cur.fetchone())["id"]
+
+
+async def _start_job(tenant_id: UUID, job_id: UUID | None) -> UUID:
+    """Mark a queued job as running, or create the crawl_jobs row for a direct run; return its id."""
+    async with db.tenant_tx(tenant_id) as conn:
+        if job_id is not None:
+            await conn.execute("UPDATE crawl_jobs SET status = 'running', started_at = now() WHERE id = %s",
+                               (job_id,))
+            return job_id
         cur = await conn.execute("INSERT INTO crawl_jobs (tenant_id) VALUES (%s) RETURNING id", (tenant_id,))
         return (await cur.fetchone())["id"]
 
@@ -284,13 +296,17 @@ async def crawl_page(fetcher: Fetcher, tenant_id: UUID, job_id: UUID, url: str, 
 # --- The crawl ----------------------------------------------------------------------------------
 
 async def run_crawl(tenant_id: UUID, knowledge: KnowledgeConfig, allow_local: bool,
-                    progress: Progress | None = None) -> tuple[UUID, CrawlStats]:
-    """Crawl and index. Raises CrawlError (or an embedding/DB error) after recording the failure."""
+                    progress: Progress | None = None, job_id: UUID | None = None) -> tuple[UUID, CrawlStats]:
+    """Crawl and index. Raises CrawlError (or an embedding/DB error) after recording the failure.
+
+    job_id: a row made by queue_job() (background crawls); None creates one (CLI crawls).
+    """
     stats = CrawlStats()
-    job_id = await _start_job(tenant_id)
-    sources = [str(u) for u in (*knowledge.sitemaps, *knowledge.start_urls)]
+    job_id = await _start_job(tenant_id, job_id)
+    sources = [str(u) for u in (*knowledge.sitemaps, *knowledge.start_urls, *knowledge.page_urls)]
     allowed_hosts = frozenset(host_key(u) for u in sources)
-    follow_links = not knowledge.sitemaps       # no sitemap: discover pages by following links
+    # Only start URLs alone mean "discover by following links"; sitemaps and page lists are exact.
+    follow_links = not knowledge.sitemaps and not knowledge.page_urls
     try:
         async with Fetcher(allowed_hosts, allow_local) as fetcher:
             queue = deque(await discover(fetcher, knowledge))

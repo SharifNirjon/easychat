@@ -47,7 +47,7 @@ We dogfood on Culpine first; no Culpine-specific logic may be hardcoded — ever
 | 4 | Widget restyle + UI blocks: Mira shell (`docs/designs/widget designs/`) themed per tenant; server-validated JSON blocks (cards, chips, checkbox/radio lists, timeline, buttons, forms) | Culpine (green) and a demo shop (terracotta) both match designs; invalid blocks rejected server-side | done |
 | 5 | Knowledge: sitemap.xml/URL crawl (SSRF-safe, plain HTTP) → chunk → bge-m3 → pgvector; products from schema.org `Product`; grounded answers + source links | answers cite pages; unknowns get "I don't know" + fallback | done (17/18 live checks; open: blog example policy quoted as company policy → step 6) |
 | 6 | Guardrails + eval set (50+ Qs incl. off-topic, injection, "are you human?", order-data leakage) | eval ≥ 90%; 100% on data-leak cases | built, judged gate pending (baseline 75%, 11/16 critical → deterministic 75/75, critical 16/16 ×3; full judged run blocked by OpenRouter credits) |
-| 7 | Self-serve onboarding: magic link → URL or sitemap upload → auto branding → crawl progress → preview → copy script tag → "installed ✓"; free-plan caps | new tenant from email to working widget in < 5 min, no staff | todo |
+| 7 | Self-serve onboarding: magic link → URL or sitemap upload → auto branding → crawl progress → preview → copy script tag → "installed ✓"; free-plan caps | new tenant from email to working widget in < 5 min, no staff | done (onboarding_check.py: 20.3 s email → installed, real API + worker + Mailpit + model) |
 | 8 | Commerce: Shopify connect + generic order-lookup API; order tracking with email OTP (widget design 6) | verified visitor sees timeline; wrong code/email reveals nothing | todo |
 | 9 | Chat forms (fixed set): return request (design 7), lead capture with consent (W-07, W-08), talk to a person, email transcript, delete my data | requests reach shop/team by email + webhook; nothing saved without consent | todo |
 | 10 | Admin v0: inbox, leads, KB, settings/install (A-01, A-04, A-05, A-06) | team reads chats, exports leads, edits + publishes KB | todo |
@@ -67,6 +67,12 @@ details or foreign links (SSE `replace`). When step 8 adds verified order access
 `order_claim` check and prompt rule 3 must allow verified data only. Eval suite: `api/evals/`
 (`python -m evals.setup`, then `python -m evals.run`); add a case for every new feature and every
 production failure. Don't tune prompts to name eval fixtures (Goodhart).
+
+Onboarding notes (step 7): own Redis job queue (`api/jobs.py`, not arq: arq pins redis<6) and
+`python worker.py`; Preact app in `app/` served by the API at `/app/`. Sign-in tokens and sessions
+live in Redis (hashed); accounts are created only via `create_signup()` (SECURITY DEFINER), and
+logins resolve via `resolve_login()`. Plan caps live in `models.TenantLimits` (no `plans` table).
+One email = one tenant until team invites (step 10).
 
 Data-model notes: `schema_migrations` is the only table without `tenant_id` (infrastructure, not
 tenant data). The API connects as a non-owner role so RLS always applies; only `resolve_site_key()`

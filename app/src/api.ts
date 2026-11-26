@@ -1,0 +1,85 @@
+/**
+ * The onboarding API (api/auth.py, api/onboarding.py). Same origin as this app, so the
+ * session cookie is sent automatically and stays HttpOnly (JavaScript never sees it).
+ */
+
+export interface Assistant {
+  company_name: string;
+  bot_name: string;
+  headline: string;
+  subtitle: string;
+  teaser: string;
+  primary: string;
+  accent: string;
+}
+
+export interface Crawl {
+  status: 'queued' | 'running' | 'done' | 'failed';
+  pages_found: number;
+  pages_indexed: number;
+  pages_unchanged: number;
+  pages_skipped: number;
+  pages_failed: number;
+  error: string | null;
+}
+
+/** Everything the app renders from (GET /api/onboarding). */
+export interface OnboardingState {
+  email: string;
+  status: 'onboarding' | 'live' | 'suspended';
+  plan: string;
+  site_url: string | null;
+  assistant: Assistant;
+  crawl: Crawl | null;
+  site_key: string | null;
+  snippet: string | null;
+  widget_url: string;
+  install_origins: string[];
+  installed_at: string | null;
+  limits: { max_pages: number; daily_crawls: number; crawls_left_today: number };
+}
+
+/** An API error with the server's visitor-safe message. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/** Call the API; throws ApiError with the server's `detail` on any non-2xx. */
+async function call<T>(method: string, path: string, body?: unknown, contentType = 'application/json'): Promise<T> {
+  const init: RequestInit = { method, credentials: 'same-origin', headers: {} };
+  if (body !== undefined) {
+    init.headers = { 'Content-Type': contentType };
+    init.body = typeof body === 'string' ? body : JSON.stringify(body);
+  }
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch {
+    throw new ApiError("Couldn't reach easychat. Check your connection and try again.", 0);
+  }
+  if (response.status === 204) return undefined as T;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : 'Something went wrong. Please try again.';
+    throw new ApiError(detail, response.status);
+  }
+  return data as T;
+}
+
+export const api = {
+  requestLink: (email: string) => call<{ ok: boolean }>('POST', '/api/auth/start', { email }),
+  verify: (token: string) => call<{ email: string }>('POST', '/api/auth/verify', { token }),
+  logout: () => call<void>('POST', '/api/auth/logout'),
+  state: () => call<OnboardingState>('GET', '/api/onboarding'),
+  setSite: (url: string) => call<OnboardingState>('POST', '/api/onboarding/site', { url }),
+  uploadSitemap: (xml: string) => call<OnboardingState>('POST', '/api/onboarding/sitemap', xml, 'application/xml'),
+  saveAssistant: (assistant: Omit<Assistant, 'accent'>) =>
+    call<OnboardingState>('PUT', '/api/onboarding/assistant', assistant),
+  crawlAgain: () => call<OnboardingState>('POST', '/api/onboarding/crawl'),
+};
+
+/** True while a crawl is waiting for the worker or running. */
+export const crawlActive = (crawl: Crawl | null): boolean =>
+  crawl !== null && (crawl.status === 'queued' || crawl.status === 'running');

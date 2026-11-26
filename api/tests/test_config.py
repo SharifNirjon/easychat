@@ -9,8 +9,9 @@ import llm
 
 @pytest.fixture
 def env(monkeypatch):
-    """A monkeypatch with PRIVACY_MODE unset, to test the defaults."""
+    """A monkeypatch with PRIVACY_MODE unset (to test the defaults) and an https app URL."""
     monkeypatch.delenv("PRIVACY_MODE", raising=False)
+    monkeypatch.setenv("APP_BASE_URL", "https://app.easychat.example")
     return monkeypatch
 
 
@@ -34,6 +35,22 @@ def test_dev_privacy_allowed_locally(env):
     env.setenv("APP_ENV", "local")
     env.setenv("PRIVACY_MODE", "dev")
     assert config.load_settings().privacy_mode == "dev"
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_plain_http_app_url_refused_outside_dev(env, app_env):
+    """Sign-in cookies are Secure outside dev, so the app URL must be https there."""
+    env.setenv("APP_ENV", app_env)
+    env.setenv("APP_BASE_URL", "http://app.easychat.example")
+    with pytest.raises(RuntimeError, match="APP_BASE_URL"):
+        config.load_settings()
+
+
+def test_app_origin_is_derived_from_the_app_url(env):
+    """The preview origin is scheme://host[:port] of APP_BASE_URL."""
+    env.setenv("APP_ENV", "local")
+    env.setenv("APP_BASE_URL", "http://LocalHost:8000/")
+    assert config.load_settings().app_origin == "http://localhost:8000"
 
 
 def test_app_env_is_required(env):

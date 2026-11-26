@@ -6,6 +6,7 @@ from uuid import UUID
 
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from config import settings
@@ -42,6 +43,22 @@ async def resolve_site_key(public_key: str) -> dict | None:
     """Site key -> tenant row, via the SECURITY DEFINER function (the only pre-tenant lookup)."""
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT * FROM resolve_site_key(%s)", (public_key,))
+        return await cur.fetchone()
+
+
+async def resolve_login(email: str) -> dict | None:
+    """Email -> {user_id, tenant_id}, via the SECURITY DEFINER function (sign-in, step 7)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT * FROM resolve_login(%s)", (email,))
+        return await cur.fetchone()
+
+
+async def create_signup(email: str, slug: str, name: str, config: dict) -> dict | None:
+    """Create a tenant + its owner for a new email (or return the existing account).
+    None only if the random slug collided: the caller retries with another."""
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT * FROM create_signup(%s, %s, %s, %s)",
+                                 (email, slug, name, Jsonb(config)))
         return await cur.fetchone()
 
 

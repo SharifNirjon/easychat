@@ -83,6 +83,22 @@ class Settings:
     # peer address (local dev). Must match the real deployment or clients can spoof their IP.
     trusted_proxy_hops: int
 
+    # Self-serve onboarding (roadmap step 7)
+    app_base_url: str            # where the onboarding app is served (/app); links in emails point here
+    widget_url: str              # the widget.js URL put in tenants' script tags
+    smtp_host: str               # Mailpit locally, SendGrid's SMTP relay later
+    smtp_port: int
+    smtp_username: str           # empty = no SMTP login (Mailpit)
+    smtp_password: str
+    mail_from: str
+    signups_per_day: int         # platform-wide new tenants per day: abuse cap and kill switch
+
+    @property
+    def app_origin(self) -> str:
+        """scheme://host[:port] of the onboarding app: its widget preview runs from here."""
+        parts = self.app_base_url.split("/")
+        return "/".join(parts[:3]).lower()
+
     @property
     def is_dev(self) -> bool:
         """True in local/test: enables /docs, /demo, PRIVACY_MODE=dev and http://localhost URLs."""
@@ -97,6 +113,9 @@ def load_settings() -> Settings:
     privacy_mode = _choice("PRIVACY_MODE", "strict", ("dev", "strict"))
     if privacy_mode == "dev" and app_env not in DEV_ENVS:
         raise RuntimeError(f"PRIVACY_MODE=dev is only allowed when APP_ENV is one of {DEV_ENVS}")
+    # Sign-in cookies are Secure outside dev, so the app must be served over https there.
+    if app_env not in DEV_ENVS and not os.getenv("APP_BASE_URL", "").startswith("https://"):
+        raise RuntimeError("APP_BASE_URL must be an https URL outside local/test")
 
     return Settings(
         app_env=app_env,
@@ -118,6 +137,14 @@ def load_settings() -> Settings:
         ip_messages_per_minute=_int("IP_MESSAGES_PER_MINUTE", "20"),
         max_request_bytes=_int("MAX_REQUEST_BYTES", "16384"),
         trusted_proxy_hops=int(_required("TRUSTED_PROXY_HOPS", "0")),
+        app_base_url=_required("APP_BASE_URL", "http://localhost:8000").rstrip("/"),
+        widget_url=_required("WIDGET_URL", "http://localhost:5173/widget.js"),
+        smtp_host=_required("SMTP_HOST", "127.0.0.1"),
+        smtp_port=_int("SMTP_PORT", "1025"),
+        smtp_username=os.getenv("SMTP_USERNAME", "").strip(),
+        smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
+        mail_from=_required("MAIL_FROM", "easychat <hello@easychat.local>"),
+        signups_per_day=_int("SIGNUPS_PER_DAY", "200"),
     )
 
 

@@ -86,20 +86,23 @@ class RequestContextMiddleware:
 
 
 class BodySizeLimitMiddleware:
-    """Rejects bodies over `max_bytes` with 413, whether or not Content-Length is honest."""
+    """Rejects bodies over `max_bytes` with 413, whether or not Content-Length is honest.
+    `overrides` gives individual paths a different cap (e.g. a file upload)."""
 
-    def __init__(self, app, max_bytes: int):
-        """Wrap the ASGI app with a maximum body size in bytes."""
+    def __init__(self, app, max_bytes: int, overrides: dict[str, int] | None = None):
+        """Wrap the ASGI app with a maximum body size in bytes (per-path overrides allowed)."""
         self.app = app
         self.max_bytes = max_bytes
+        self.overrides = overrides or {}
 
     async def __call__(self, scope, receive, send):
         """413 early on a too-large Content-Length, else count bytes as they arrive."""
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
+        max_bytes = self.overrides.get(scope["path"], self.max_bytes)
         declared = dict(scope["headers"]).get(b"content-length")
-        if declared is not None and (not declared.isdigit() or int(declared) > self.max_bytes):
+        if declared is not None and (not declared.isdigit() or int(declared) > max_bytes):
             return await self._reject(send)
 
         received = 0
@@ -110,7 +113,7 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
+                if received > max_bytes:
                     # Raised while FastAPI reads the body; it re-raises HTTPException as a 413 response.
                     raise HTTPException(status_code=413, detail="Request body too large")
             return message

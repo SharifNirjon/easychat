@@ -1,0 +1,42 @@
+<!doctype html>
+<!--
+  Local demo of "installing" the widget (roadmap step 7). Stands in for a shop owner pasting their
+  script tag into their own site: open http://localhost:3001/try.html?key=pk_... after onboarding
+  a site on http://localhost:3001 (e.g. http://localhost:3001/mirela/). The onboarding app shows
+  this link on its Install step and turns to "Installed ✓" when the widget loads here.
+  Dev only: widget/demo/ is never part of the production build.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My website (install demo)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; color: #222; }
+    code { background: #f2f2f2; padding: 0.1rem 0.3rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>My website</h1>
+  <p>This page plays the shop owner's own website, with their easychat script tag pasted in.</p>
+  <p id="status">Loading the widget…</p>
+  <script>
+    // Same as pasting <script src=".../widget.js" data-key="pk_..." async></script> by hand.
+    (function () {
+      var key = new URLSearchParams(location.search).get('key') || '';
+      var status = document.getElementById('status');
+      if (!/^pk_[A-Za-z0-9_]{8,64}$/.test(key)) {
+        status.textContent = 'Add ?key=pk_... to the address (the onboarding app links here with it).';
+        return;
+      }
+      var tag = document.createElement('script');
+      tag.src = 'http://localhost:5173/widget.js';
+      tag.async = true;
+      tag.dataset.key = key;
+      document.body.appendChild(tag);
+      status.innerHTML = 'Widget installed with key <code></code>: look for the chat button.';
+      status.querySelector('code').textContent = key;
+    })();
+  </script>
+</body>
+</html>

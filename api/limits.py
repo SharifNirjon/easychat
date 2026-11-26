@@ -3,8 +3,10 @@
 The Origin check stops other websites' browsers, but anyone with curl can forge an Origin.
 These limits are what actually bound cost:
   * per client IP: messages per minute
-  * per tenant: new conversations per month, LLM tokens per day
+  * per tenant: new conversations per month, LLM tokens per day, crawls per day
   * per conversation: user turns (checked in Postgres, see conversations.py)
+  * self-serve sign-up (step 7): sign-in emails per address and per IP, new accounts per IP
+    and per day platform-wide (SIGNUPS_PER_DAY, which is also the kill switch)
 
 If Redis is unreachable we fail closed (503): an outage must not turn into an unmetered bill.
 """
@@ -13,7 +15,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import redis.asyncio as aioredis
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from config import settings
 from models import TenantLimits
@@ -21,6 +23,11 @@ from models import TenantLimits
 log = logging.getLogger("easychat.limits")
 
 client = aioredis.from_url(settings.redis_url, socket_timeout=2, socket_connect_timeout=2)
+
+SIGNIN_EMAILS_PER_ADDRESS_HOUR = 3     # sign-in links one inbox can be sent per hour
+SIGNIN_REQUESTS_PER_IP_HOUR = 10       # sign-in requests one client can make per hour
+SIGNUPS_PER_IP_DAY = 3                 # new accounts one client can create per day
+HOUR, DAY = 3600, 86400
 
 
 class LimitExceeded(HTTPException):
@@ -53,6 +60,26 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _today() -> str:
+    """The current UTC day as YYYYMMDD (for daily counters)."""
+    return _now().strftime("%Y%m%d")
+
+
+def client_ip(request: Request) -> str:
+    """The visitor's IP for rate limiting.
+
+    Each trusted proxy appends the address it received the request from to X-Forwarded-For,
+    so the real client is the Nth entry from the right; anything further left is client-supplied
+    and may be forged. With no trusted proxies, use the socket peer.
+    """
+    hops = settings.trusted_proxy_hops
+    if hops > 0:
+        forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+        if len(forwarded) >= hops:
+            return forwarded[-hops]
+    return request.client.host if request.client else "unknown"
+
+
 async def check_ip(ip: str) -> None:
     """Count this message against the visitor IP's per-minute limit; 429 when over."""
     minute = _now().strftime("%Y%m%d%H%M")
@@ -65,6 +92,47 @@ async def count_new_conversation(tenant_id: UUID, limits: TenantLimits) -> None:
     month = _now().strftime("%Y%m")
     if await _hit(f"rl:conv:{tenant_id}:{month}", 40 * 86400) > limits.monthly_conversations:
         raise LimitExceeded("This assistant has reached its monthly chat limit.", retry_after=86400)
+
+
+async def check_signin(email: str, ip: str) -> None:
+    """Count a sign-in email request against the address's and the client's hourly limits."""
+    hour = _now().strftime("%Y%m%d%H")
+    if await _hit(f"rl:signin:ip:{ip}:{hour}", HOUR) > SIGNIN_REQUESTS_PER_IP_HOUR:
+        raise LimitExceeded("Too many sign-in requests. Please try again later.", retry_after=HOUR)
+    if await _hit(f"rl:signin:email:{email}:{hour}", HOUR) > SIGNIN_EMAILS_PER_ADDRESS_HOUR:
+        raise LimitExceeded("We've already sent several links to this address. Check your inbox, "
+                            "or try again in an hour.", retry_after=HOUR)
+
+
+async def count_signup(ip: str) -> None:
+    """Count a new account against the client's daily limit and the platform's daily cap."""
+    day = _today()
+    if await _hit(f"rl:signup:ip:{ip}:{day}", DAY) > SIGNUPS_PER_IP_DAY:
+        raise LimitExceeded("Too many new accounts from this network today. Please try again tomorrow.",
+                            retry_after=DAY)
+    if await _hit(f"rl:signup:all:{day}", DAY) > settings.signups_per_day:
+        raise LimitExceeded("Sign-ups are paused for today. Please try again tomorrow.", retry_after=DAY)
+
+
+def _crawl_key(tenant_id: UUID) -> str:
+    """Redis key for the number of crawls a tenant started today."""
+    return f"rl:crawl:{tenant_id}:{_today()}"
+
+
+async def count_crawl(tenant_id: UUID, limits: TenantLimits) -> None:
+    """Count a crawl against the tenant's daily limit; 429 when over."""
+    if await _hit(_crawl_key(tenant_id), DAY) > limits.daily_crawls:
+        raise LimitExceeded(f"You can refresh your website {limits.daily_crawls} times a day. "
+                            "Please try again tomorrow.", retry_after=DAY)
+
+
+async def crawls_left(tenant_id: UUID, limits: TenantLimits) -> int:
+    """How many more crawls the tenant may start today."""
+    try:
+        used = int(await client.get(_crawl_key(tenant_id)) or 0)
+    except aioredis.RedisError as exc:
+        raise _unavailable(exc) from exc
+    return max(0, limits.daily_crawls - used)
 
 
 def _budget_key(tenant_id: UUID) -> str:
