@@ -4,7 +4,8 @@ import pytest
 
 import guards
 from guards import ORDER_CLAIM, PROMPT_LEAK, UNGROUNDED_CONTACT, UNGROUNDED_LINK, OutputGuard
-from prompts import PROMPT_FINGERPRINTS, assistant_system_prompt, grounded_system_prompt
+from prompts import (ORDERS_LOOKUP, ORDERS_OFF, ORDERS_VERIFIED, PROMPT_FINGERPRINTS, assistant_system_prompt,
+                     grounded_system_prompt)
 
 CANARY = "ref-0123456789"
 ALLOWED = "Email hello@shop.example or call +1 555 0142. Order 77881 was mentioned by the visitor."
@@ -131,10 +132,65 @@ def test_fingerprints_really_are_in_the_prompts():
     """The fingerprints must match the prompt text, or the leak check silently stops working."""
     base = assistant_system_prompt("Fern", "Fernwood", CANARY).lower()
     grounded = grounded_system_prompt("Fern", "Fernwood", CANARY, "<knowledge>\n</knowledge>", "[[X]]").lower()
+    verified = assistant_system_prompt("Fern", "Fernwood", CANARY, ORDERS_VERIFIED).lower()
     for fingerprint in PROMPT_FINGERPRINTS:
+        if fingerprint == "<verified_order>":         # only verified-order prompts carry it
+            assert fingerprint in verified and fingerprint not in base
+            continue
         assert fingerprint in grounded
         assert fingerprint in base or fingerprint == "<knowledge>"
     assert CANARY in base
+
+
+# --- Verified orders (step 8) --------------------------------------------------------------------
+
+def verified_guard() -> OutputGuard:
+    """A guard for a conversation that verified order MR-20417 (tracking PTH-88213)."""
+    return OutputGuard(CANARY, PROMPT_FINGERPRINTS, ALLOWED, {"shop.example"}, frozenset({"MR-20417", "PTH-88213"}))
+
+
+def test_verified_order_may_be_described():
+    """Status claims about the verified order, with its own numbers, pass (even split mid-number)."""
+    guard = verified_guard()
+    text = stream(guard, ["Your order #MR-20", "417 is out for delivery. Tracking number: PTH-88", "213."])
+    assert guard.violation is None and text.endswith("PTH-88213.")
+
+
+@pytest.mark.parametrize("reply", ["Order #MR-55555 has shipped too.", "Your tracking number is DHL123456.",
+                                   "Order number 1001 was delivered."])
+def test_other_orders_are_blocked_even_after_verification(reply):
+    """Any other order or tracking number is stopped: verification covers one order only."""
+    guard = verified_guard()
+    stream(guard, [reply])
+    assert guard.violation == ORDER_CLAIM
+
+
+def test_typographic_hyphens_cannot_hide_an_order_number():
+    """Found in the evals: models write 'MR‑20417' with U+2011. Another order spelled that way is
+    still another order, and the verified one still matches."""
+    guard = verified_guard()
+    stream(guard, ["Order #MR‑55555 has shipped."])
+    assert guard.violation == ORDER_CLAIM
+    ok = verified_guard()
+    stream(ok, ["Your order #MR‑20417 arrives by 6 pm."])
+    assert ok.violation is None
+    assert guards.order_claims("Your order has shipped.")
+
+
+def test_order_references_are_found():
+    """'#MR-20417', 'order 1001', 'tracking number: PTH-88213'; words without digits are not numbers."""
+    refs = guards.order_references("Order #mr-20417, order 1001, tracking number: PTH-88213, #thanks")
+    assert refs == ["MR-20417", "1001", "PTH-88213"]
+
+
+def test_order_rule_changes_with_the_mode():
+    """Off: can't look up orders. Lookup: 'track my order'. Verified: only the order in the section."""
+    off = assistant_system_prompt("Fern", "Fernwood", CANARY, ORDERS_OFF)
+    lookup = assistant_system_prompt("Fern", "Fernwood", CANARY, ORDERS_LOOKUP)
+    verified = assistant_system_prompt("Fern", "Fernwood", CANARY, ORDERS_VERIFIED)
+    assert "can't look up orders in this chat" in off
+    assert 'type "track my order"' in lookup and "<verified_order>" not in lookup
+    assert "own ONE order" in verified and "other customers" in verified
 
 
 def test_order_claim_stops_the_reply():

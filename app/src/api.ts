@@ -37,6 +37,32 @@ export interface OnboardingState {
   install_origins: string[];
   installed_at: string | null;
   limits: { max_pages: number; daily_crawls: number; crawls_left_today: number };
+  /** The connected order system (step 8): never its credentials. */
+  orders: OrdersConnection | null;
+  /** False when this server has no SECRETS_KEY (order tracking can't be connected). */
+  orders_available: boolean;
+}
+
+export interface OrdersConnection {
+  kind: 'shopify' | 'api';
+  endpoint: string;             // shop domain or API URL
+  connected_at: string;
+  checked_at: string | null;
+}
+
+/** Shopify app credentials: client ID + secret, or an older app's access token. */
+export interface ShopifyCredentials {
+  shop: string;
+  client_id?: string;
+  client_secret?: string;
+  access_token?: string;
+}
+
+export interface OrderTestResult {
+  found: boolean;
+  status?: string;
+  item_count?: number | null;
+  orders: OrdersConnection | null;
 }
 
 /** An API error with the server's visitor-safe message. */
@@ -78,6 +104,13 @@ export const api = {
   saveAssistant: (assistant: Omit<Assistant, 'accent'>) =>
     call<OnboardingState>('PUT', '/api/onboarding/assistant', assistant),
   crawlAgain: () => call<OnboardingState>('POST', '/api/onboarding/crawl'),
+  connectShopify: (credentials: ShopifyCredentials) =>
+    call<{ orders: OrdersConnection }>('PUT', '/api/onboarding/orders/shopify', credentials),
+  /** The answer's `secret` is shown this once only. */
+  connectOrderApi: (url: string) =>
+    call<{ orders: OrdersConnection; secret: string }>('PUT', '/api/onboarding/orders/api', { url }),
+  testOrder: (order_number: string) => call<OrderTestResult>('POST', '/api/onboarding/orders/test', { order_number }),
+  disconnectOrders: () => call<void>('DELETE', '/api/onboarding/orders'),
 };
 
 /** True while a crawl is waiting for the worker or running. */

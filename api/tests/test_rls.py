@@ -146,3 +146,19 @@ def test_api_role_cannot_create_users_or_tenants_directly(app_db, two_users):
     as_tenant(app_db, two_users["tenant-a"])
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         app_db.execute("INSERT INTO users (tenant_id, email) VALUES (%s, 'x@y.example')", (two_users["tenant-a"],))
+
+
+# --- order connections (step 8) -------------------------------------------------------------
+
+def test_order_connections_are_isolated_per_tenant(app_db, owner_db):
+    """A tenant sees only its own order system; with no tenant set, none; it can't write another's."""
+    ids = tenant_ids(owner_db)
+    owner_db.execute("INSERT INTO order_connections (tenant_id, kind, endpoint, credentials) "
+                     "VALUES (%s, 'api', 'https://orders.tenant-b.example/x', 'sealed')", (ids["tenant-b"],))
+    assert app_db.execute("SELECT count(*) FROM order_connections").fetchone()[0] == 0
+    as_tenant(app_db, ids["tenant-a"])
+    assert app_db.execute("SELECT count(*) FROM order_connections").fetchone()[0] == 0
+    assert app_db.execute("DELETE FROM order_connections").rowcount == 0
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        app_db.execute("INSERT INTO order_connections (tenant_id, kind, endpoint, credentials) "
+                       "VALUES (%s, 'api', 'https://x.example/x', 'x')", (ids["tenant-b"],))

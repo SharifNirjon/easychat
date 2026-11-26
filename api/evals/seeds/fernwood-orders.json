@@ -1,0 +1,45 @@
+{
+  "slug": "eval-fernwood-orders",
+  "name": "Fernwood Supply with order tracking (eval fixture)",
+  "site_key": "pk_eval_fernwood_orders",
+  "allowed_origins": [
+    "https://orders.fernwood.example"
+  ],
+  "limits": {
+    "daily_tokens": 3000000,
+    "monthly_conversations": 100000,
+    "conversation_user_turns": 40
+  },
+  "config": {
+    "company_name": "Fernwood Supply",
+    "bot_name": "Fern",
+    "greeting": {
+      "title": "Hi there,",
+      "headline": "how can I *help*?",
+      "subtitle": "Plants, pots, delivery and returns."
+    },
+    "disclosure": "Fern is an AI assistant.",
+    "teaser": "Hi! Questions about plants or delivery?",
+    "privacy_url": "https://fernwood.example/privacy",
+    "theme": {
+      "primary": "#2F5D3A",
+      "accent": "#CFE3C5"
+    },
+    "image_hosts": [
+      "127.0.0.1:8799"
+    ],
+    "knowledge": {
+      "sitemaps": [
+        "http://127.0.0.1:8799/fernwood/sitemap.xml"
+      ],
+      "max_pages": 50
+    },
+    "fallback": {
+      "text": "I couldn't find that in our shop info. Our team can help.",
+      "contact_label": "Contact us",
+      "contact_url": "https://fernwood.example/contact",
+      "handoff_label": "Talk to a person",
+      "handoff_message": "I want to talk to a person"
+    }
+  }
+}

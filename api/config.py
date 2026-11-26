@@ -2,7 +2,10 @@
 
 Nothing in the code base reads os.environ directly — everything goes through `settings`.
 """
+import base64
+import binascii
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,6 +96,10 @@ class Settings:
     mail_from: str
     signups_per_day: int         # platform-wide new tenants per day: abuse cap and kill switch
 
+    # Commerce (roadmap step 8): encrypts tenants' shop credentials and keys one-time-code hashes.
+    # None only in local dev without SECRETS_KEY: order tracking then can't be connected.
+    secrets_key: bytes | None
+
     @property
     def app_origin(self) -> str:
         """scheme://host[:port] of the onboarding app: its widget preview runs from here."""
@@ -103,6 +110,28 @@ class Settings:
     def is_dev(self) -> bool:
         """True in local/test: enables /docs, /demo, PRIVACY_MODE=dev and http://localhost URLs."""
         return self.app_env in DEV_ENVS
+
+
+SECRETS_KEY_BYTES = 32           # AES-256
+
+
+def _secrets_key(app_env: str) -> bytes | None:
+    """SECRETS_KEY: 32 random bytes, base64. Required outside local/test. Tests without one get a
+    throwaway key per run; local dev without one simply can't connect order tracking."""
+    raw = os.getenv("SECRETS_KEY", "").strip()
+    if not raw:
+        if app_env == "test":
+            return secrets.token_bytes(SECRETS_KEY_BYTES)
+        if app_env in DEV_ENVS:
+            return None
+        raise RuntimeError("Missing required env var SECRETS_KEY (see api/.env.example)")
+    try:
+        key = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    except (binascii.Error, ValueError) as exc:
+        raise RuntimeError("SECRETS_KEY must be base64") from exc
+    if len(key) != SECRETS_KEY_BYTES:
+        raise RuntimeError(f"SECRETS_KEY must decode to {SECRETS_KEY_BYTES} bytes")
+    return key
 
 
 def load_settings() -> Settings:
@@ -145,6 +174,7 @@ def load_settings() -> Settings:
         smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
         mail_from=_required("MAIL_FROM", "easychat <hello@easychat.local>"),
         signups_per_day=_int("SIGNUPS_PER_DAY", "200"),
+        secrets_key=_secrets_key(app_env),
     )
 
 

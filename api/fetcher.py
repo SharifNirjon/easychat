@@ -223,20 +223,33 @@ class Fetcher:
         parser = self._robots[f"{parts.scheme}://{parts.netloc}"]
         return list(parser.site_maps() or []) if parser else []
 
-    async def _request(self, url: str, max_bytes: int) -> tuple[int, dict[str, str], bytes]:
-        """One GET without redirects: status, headers and a size-capped body."""
+    async def call(self, method: str, url: str, headers: dict[str, str], body: bytes | None,
+                   max_bytes: int) -> tuple[int, bytes]:
+        """One API request (order lookups, step 8): any method, the caller's headers, and NO
+        redirects: a redirect could carry the request's credentials to another host, so it
+        comes back as its 3xx status. Same URL, address and size rules as get()."""
+        current = check_url(url, self.allowed_hosts, self.allow_local)
+        status, _, response_body = await self._request(current, max_bytes, method, headers, body)
+        return status, response_body
+
+    async def _request(self, url: str, max_bytes: int, method: str = "GET",
+                       headers: dict[str, str] | None = None,
+                       body: bytes | None = None) -> tuple[int, dict[str, str], bytes]:
+        """One request without redirects: status, headers and a size-capped body. Without
+        `headers`, the crawler's own User-Agent and Accept are sent."""
         assert self._pool is not None, "use Fetcher as an async context manager"
         await self._wait_turn(host_key(url))
-        request_headers = [
-            (b"User-Agent", USER_AGENT.encode()),
-            (b"Accept", b"text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8"),
-            (b"Accept-Encoding", b"identity"),
-        ]
+        sent = headers if headers is not None else {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8",
+        }
+        request_headers = [(k.encode(), v.encode()) for k, v in sent.items()]
+        request_headers.append((b"Accept-Encoding", b"identity"))
         timeouts = {"connect": CONNECT_TIMEOUT_SECONDS, "read": TOTAL_TIMEOUT_SECONDS,
                     "write": TOTAL_TIMEOUT_SECONDS, "pool": TOTAL_TIMEOUT_SECONDS}
         try:
             async with asyncio.timeout(TOTAL_TIMEOUT_SECONDS):
-                async with self._pool.stream("GET", url, headers=request_headers,
+                async with self._pool.stream(method, url, headers=request_headers, content=body,
                                              extensions={"timeout": timeouts}) as response:
                     headers = _header_dict(response.headers)
                     declared = headers.get("content-length", "")

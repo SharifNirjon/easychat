@@ -48,6 +48,17 @@ export interface WidgetConfig {
 // --- UI blocks --------------------------------------------------------------------------
 
 export type Action = { kind: 'send'; text: string } | { kind: 'link'; url: string };
+
+/** Chat forms the server handles (api/blocks.py FormName). */
+export type FormName = 'order_lookup' | 'order_code';
+
+/** A submitted form. Client-side only, never part of a block; `label` is the visitor's bubble text. */
+export interface FormSubmit {
+  kind: 'form';
+  form: FormName;
+  values: Record<string, string>;
+  label: string;
+}
 export type Tone = 'info' | 'success' | 'warning' | 'danger';
 
 export interface ImageRef {
@@ -80,7 +91,14 @@ export interface TimelineStep {
 }
 
 export type FormField =
-  | { kind: 'text' | 'email' | 'textarea'; name: string; label: string; placeholder?: string; required?: boolean }
+  | {
+      kind: 'text' | 'email' | 'textarea' | 'code';
+      name: string;
+      label: string;
+      placeholder?: string;
+      required?: boolean;
+      value?: string;
+    }
   | { kind: 'checkbox'; name: string; label: string }
   | { kind: 'rating'; name: string; label: string }
   | { kind: 'tags'; name: string; label: string; options: string[] };
@@ -107,8 +125,8 @@ export type Block =
       footer?: string;
       link?: { kind: 'link'; url: string };
     }
-  | { type: 'form'; title?: string; fields: FormField[]; submit_label: string }
+  | { type: 'form'; title?: string; fields: FormField[]; submit_label: string; submit?: FormName }
   | { type: 'sources'; items: { title: string; url: string }[] }
   | { type: 'notice'; tone?: Tone; text: string };
 
-export type ActionHandler = (action: Action) => void;
+export type ActionHandler = (action: Action | FormSubmit) => void;

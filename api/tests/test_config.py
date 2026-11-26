@@ -1,4 +1,5 @@
 """Settings fail closed: strict privacy by default, dev mode refused outside local/test."""
+import base64
 import dataclasses
 
 import pytest
@@ -9,9 +10,11 @@ import llm
 
 @pytest.fixture
 def env(monkeypatch):
-    """A monkeypatch with PRIVACY_MODE unset (to test the defaults) and an https app URL."""
+    """A monkeypatch with PRIVACY_MODE unset (to test the defaults), an https app URL and a
+    valid SECRETS_KEY (32 bytes, base64)."""
     monkeypatch.delenv("PRIVACY_MODE", raising=False)
     monkeypatch.setenv("APP_BASE_URL", "https://app.easychat.example")
+    monkeypatch.setenv("SECRETS_KEY", base64.urlsafe_b64encode(bytes(range(32))).decode())
     return monkeypatch
 
 
@@ -66,3 +69,27 @@ def test_strict_mode_sends_zdr_provider_prefs(monkeypatch):
     assert llm._openrouter_options()["provider"] == {"data_collection": "deny", "zdr": True, "sort": "latency"}
     monkeypatch.setattr(llm, "settings", dataclasses.replace(llm.settings, privacy_mode="dev"))
     assert "provider" not in llm._openrouter_options()
+
+
+def test_secrets_key_is_required_outside_dev(env):
+    """Staging/production can't start without the key that protects tenants' shop credentials."""
+    env.setenv("APP_ENV", "production")
+    env.delenv("SECRETS_KEY")
+    with pytest.raises(RuntimeError, match="SECRETS_KEY"):
+        config.load_settings()
+
+
+@pytest.mark.parametrize("value", ["not base64!", base64.b64encode(b"too short").decode()])
+def test_secrets_key_must_be_32_base64_bytes(env, value):
+    """A malformed key stops the app instead of weakening the encryption."""
+    env.setenv("APP_ENV", "production")
+    env.setenv("SECRETS_KEY", value)
+    with pytest.raises(RuntimeError, match="SECRETS_KEY"):
+        config.load_settings()
+
+
+def test_local_dev_may_run_without_a_secrets_key(env):
+    """Locally, order tracking is simply unavailable without one."""
+    env.setenv("APP_ENV", "local")
+    env.delenv("SECRETS_KEY")
+    assert config.load_settings().secrets_key is None

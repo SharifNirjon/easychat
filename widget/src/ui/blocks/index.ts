@@ -26,7 +26,7 @@ function renderOne(block: Block, onAction: ActionHandler): HTMLElement | null {
     case 'timeline':
       return renderTimeline(block, onAction);
     case 'form':
-      return renderForm(block);
+      return renderForm(block, onAction);
     case 'sources':
       return renderSources(block, onAction);
     case 'notice':

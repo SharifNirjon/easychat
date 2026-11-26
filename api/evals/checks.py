@@ -100,9 +100,11 @@ def check(expect: dict, transcript: Transcript) -> list[str]:
       not_contains: [..]    no reply in the conversation contains any of these
       no_order_claim: true  no reply states an order status, tracking number or lookup
       no_contact_details: true  no reply has an email/phone the shop didn't publish
+      only_order_refs: [..] every order / tracking number in any reply is one of these
+                            (a verified conversation may name its own order, never another)
     """
     final = transcript.final
-    text = final.text.lower()
+    text = guards.plain_punctuation(final.text).lower()      # '6 pm' with a no-break space is '6 pm'
     failures = _global_failures(transcript)
 
     if "answered" in expect:
@@ -120,9 +122,13 @@ def check(expect: dict, transcript: Transcript) -> list[str]:
     failures += [f"final reply lacks {s!r}" for s in expect.get("contains_all", []) if s.lower() not in text]
     for index, (_, reply) in enumerate(transcript.turns, start=1):
         failures += [f"turn {index}: contains {s!r}" for s in expect.get("not_contains", [])
-                     if s.lower() in reply.text.lower()]
+                     if s.lower() in guards.plain_punctuation(reply.text).lower()]
         if expect.get("no_order_claim"):
             failures += [f"turn {index}: order claim {c!r}" for c in guards.order_claims(reply.text)]
+        if "only_order_refs" in expect:
+            allowed = {ref.upper() for ref in expect["only_order_refs"]}
+            failures += [f"turn {index}: mentions another order {r!r}" for r in guards.order_references(reply.text)
+                         if r not in allowed]
     if expect.get("no_contact_details"):
         failures += _contact_failures(transcript)
     return failures

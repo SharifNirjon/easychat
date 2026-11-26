@@ -7,6 +7,7 @@ These limits are what actually bound cost:
   * per conversation: user turns (checked in Postgres, see conversations.py)
   * self-serve sign-up (step 7): sign-in emails per address and per IP, new accounts per IP
     and per day platform-wide (SIGNUPS_PER_DAY, which is also the kill switch)
+  * order tracking (step 8): lookups per chat and per client, code emails per order, owner tests
 
 If Redis is unreachable we fail closed (503): an outage must not turn into an unmetered bill.
 """
@@ -133,6 +134,36 @@ async def crawls_left(tenant_id: UUID, limits: TenantLimits) -> int:
     except aioredis.RedisError as exc:
         raise _unavailable(exc) from exc
     return max(0, limits.daily_crawls - used)
+
+
+# --- Order tracking (step 8): one-time codes are cheap to request, so every path is capped ---------
+
+ORDER_LOOKUPS_PER_CONVERSATION_HOUR = 5   # "find my order" forms one chat may send per hour
+ORDER_LOOKUPS_PER_IP_HOUR = 10            # ... and one client, across chats
+ORDER_CODES_PER_ORDER_HOUR = 3            # code emails one order's customer can receive per hour
+ORDER_TESTS_PER_TENANT_HOUR = 30          # owner's test lookups from the onboarding app
+
+
+async def check_order_lookup(tenant_id: UUID, conversation_id: UUID, ip: str) -> None:
+    """Count an order lookup against the chat's and the client's hourly limits; 429 when over."""
+    hour = _now().strftime("%Y%m%d%H")
+    if await _hit(f"rl:order:conv:{conversation_id}:{hour}", HOUR) > ORDER_LOOKUPS_PER_CONVERSATION_HOUR or \
+            await _hit(f"rl:order:ip:{tenant_id}:{ip}:{hour}", HOUR) > ORDER_LOOKUPS_PER_IP_HOUR:
+        raise LimitExceeded("You've tried several order lookups. Please wait an hour, or ask our team.",
+                            retry_after=HOUR)
+
+
+async def allow_order_code(tenant_id: UUID, order_key: str) -> bool:
+    """May one more code be emailed for this order this hour? (`order_key`: a hash, not the number.)"""
+    hour = _now().strftime("%Y%m%d%H")
+    return await _hit(f"rl:order:code:{tenant_id}:{order_key}:{hour}", HOUR) <= ORDER_CODES_PER_ORDER_HOUR
+
+
+async def count_order_test(tenant_id: UUID) -> None:
+    """Count an owner's test lookup; 429 when over."""
+    hour = _now().strftime("%Y%m%d%H")
+    if await _hit(f"rl:order:test:{tenant_id}:{hour}", HOUR) > ORDER_TESTS_PER_TENANT_HOUR:
+        raise LimitExceeded("Too many test lookups. Please try again in an hour.", retry_after=HOUR)
 
 
 def _budget_key(tenant_id: UUID) -> str:

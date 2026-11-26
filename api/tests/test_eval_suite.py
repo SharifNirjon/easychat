@@ -3,7 +3,7 @@ from evals.checks import PROMPT_PHRASES, Reply, Transcript, check
 from evals.run import CRITICAL_CATEGORIES, load_cases
 
 KNOWN_EXPECT_KEYS = {"answered", "sources", "blocks_include", "contains_any", "contains_all", "not_contains",
-                     "no_order_claim", "no_contact_details", "status"}
+                     "no_order_claim", "no_contact_details", "status", "only_order_refs"}
 
 
 def transcript(*replies: str, blocks: list[dict] | None = None) -> Transcript:
@@ -20,6 +20,7 @@ def test_case_files_are_valid():
     for case in cases:
         assert set(case.expect) <= KNOWN_EXPECT_KEYS, case.id
         assert case.kind in {"chat", "steal_conversation", "wrong_origin"}, case.id
+        assert case.orders in {None, "lookup", "verified"}, case.id
         assert case.expect or case.judge, f"{case.id} checks nothing"
     categories = {c.category for c in cases}
     assert CRITICAL_CATEGORIES <= categories
@@ -48,3 +49,10 @@ def test_order_claims_fail_but_policy_passes():
     """'Your order has shipped' is a claim; delivery policy is not."""
     assert check({"no_order_claim": True}, transcript("Your order has shipped!"))
     assert check({"no_order_claim": True}, transcript("Delivery takes 2 to 4 business days.")) == []
+
+
+def test_only_the_verified_order_may_be_named():
+    """After verification, the reply may name its own order and tracking numbers, nothing else."""
+    allowed = {"only_order_refs": ["MR-20417", "PTH-88213"]}
+    assert check(allowed, transcript("Order #MR-20417 is with Pathao, tracking number PTH-88213.")) == []
+    assert check(allowed, transcript("Your other order #MR-20388 was delivered."))

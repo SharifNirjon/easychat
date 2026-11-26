@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, ValidationError
 import crawler
 import db
 import limits
+import order_connections
 from auth import Session, current_session, same_origin
 from blocks import LOCAL_HOSTS
 from branding import (DEFAULT_BOT_NAME, accent_for, assistant_config, name_from_host, normalize_hex,
@@ -107,6 +108,8 @@ async def _state(session: Session) -> dict:
         "installed_at": row["installed_at"].isoformat() if row["installed_at"] else None,
         "limits": {"max_pages": plan.max_pages, "daily_crawls": plan.daily_crawls,
                    "crawls_left_today": await limits.crawls_left(session.tenant_id, plan)},
+        "orders": await order_connections.summary(session.tenant_id),      # step 8; never credentials
+        "orders_available": settings.secrets_key is not None,
     }
 
 

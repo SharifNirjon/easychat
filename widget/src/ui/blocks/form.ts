@@ -1,24 +1,43 @@
 /**
- * Small forms (designs 8, 10): text/email/textarea, checkbox, star rating, tag chips.
- * Step 4 renders them; submitting is wired up in roadmap step 9, so the submit button is
- * disabled with a short note rather than pretending to work.
+ * Small forms (designs 6, 8, 10): text/email/textarea/one-time code, checkbox, star rating, tag chips.
+ * A form the server can handle (`submit`, e.g. order tracking) sends its text values to /chat;
+ * the others are shown with a disabled button and a note until roadmap step 9 wires them up.
+ * Typed values live only in the DOM and the one request: never in sessionStorage.
  */
 import { el } from '../../dom';
 import { icon } from '../../icons';
-import type { Block, FormField } from '../../types';
+import type { ActionHandler, Block, FormField } from '../../types';
 import { groupLabel, uid } from './shared';
 
 type FormBlock = Extract<Block, { type: 'form' }>;
+type TextFormField = Extract<FormField, { kind: 'text' | 'email' | 'textarea' | 'code' }>;
 
 const RATING_MAX = 5;
 const RATING_WORDS = ['Poor', 'Fair', 'Okay', 'Really good', 'Loved it'];
 const NOT_YET = "Sending this form isn't available yet.";
+const FILL_IN = 'Please fill in every field.';
+const CODE_DIGITS = 6;
 
-/** A labelled text, email or multi-line field. */
-function textField(field: Extract<FormField, { kind: 'text' | 'email' | 'textarea' }>): HTMLElement {
+/** A labelled text, email, multi-line or one-time-code field, optionally pre-filled. */
+function textField(field: TextFormField): HTMLElement {
   const id = uid('field');
-  const attrs = { id, name: field.name, class: 'ec-field', placeholder: field.placeholder ?? '', required: field.required ?? false };
-  const input = field.kind === 'textarea' ? el('textarea', { ...attrs, rows: '3' }) : el('input', { ...attrs, type: field.kind });
+  const attrs = {
+    id, name: field.name, class: 'ec-field', placeholder: field.placeholder ?? '', required: field.required ?? false,
+    value: field.value ?? '',
+  };
+  let input: HTMLElement;
+  if (field.kind === 'textarea') {
+    input = el('textarea', { ...attrs, rows: '3' });
+    (input as HTMLTextAreaElement).value = field.value ?? '';
+  } else if (field.kind === 'code') {
+    // Numeric keypad on phones, and the OS can offer the code from the email/SMS.
+    input = el('input', {
+      ...attrs, type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: `[0-9]{${CODE_DIGITS}}`,
+      maxlength: String(CODE_DIGITS), class: 'ec-field ec-field--code',
+    });
+  } else {
+    input = el('input', { ...attrs, type: field.kind, autocomplete: field.kind === 'email' ? 'email' : 'off' });
+  }
   return el('div', { class: 'ec-form-row' }, [el('label', { class: 'ec-label', for: id }, [field.label]), input]);
 }
 
@@ -78,18 +97,49 @@ function renderField(field: FormField): HTMLElement {
   }
 }
 
-/** A small form. Submitting arrives in roadmap step 9, so the button is disabled with a note. */
-export function renderForm(block: FormBlock): HTMLElement {
+/** The text values of a form's text-like fields, trimmed; null if a required one is empty or invalid. */
+function textValues(form: HTMLFormElement, fields: FormField[]): Record<string, string> | null {
+  const values: Record<string, string> = {};
+  for (const field of fields) {
+    if (!['text', 'email', 'textarea', 'code'].includes(field.kind)) continue;
+    const input = form.elements.namedItem(field.name) as HTMLInputElement | HTMLTextAreaElement | null;
+    const value = input?.value.trim() ?? '';
+    if (!input || (('required' in field && field.required) && !value) || (value && !input.checkValidity())) return null;
+    values[field.name] = value;
+  }
+  return values;
+}
+
+/**
+ * A small form. With `submit` it sends its values (once) through `onAction`; without, the button
+ * stays disabled with a note until roadmap step 9.
+ */
+export function renderForm(block: FormBlock, onAction: ActionHandler): HTMLElement {
   const noteId = uid('note');
+  const submittable = Boolean(block.submit);
+  const note = el('p', { class: 'ec-form-note', id: noteId, 'aria-live': 'polite' }, submittable ? [] : [NOT_YET]);
+  const button = el('button', {
+    type: 'submit', class: 'ec-btn ec-btn--primary ec-btn--block', disabled: !submittable, 'aria-describedby': noteId,
+  }, [block.submit_label]);
   const form = el('form', { class: 'ec-panel-card ec-form', novalidate: true }, [
     ...(block.title ? [el('h3', { class: 'ec-form-title' }, [block.title])] : []),
     ...block.fields.map(renderField),
-    el('button', { type: 'submit', class: 'ec-btn ec-btn--primary ec-btn--block', disabled: true, 'aria-describedby': noteId }, [
-      block.submit_label,
-    ]),
-    el('p', { class: 'ec-form-note', id: noteId }, [NOT_YET]),
+    button,
+    note,
   ]);
-  form.addEventListener('submit', (event) => event.preventDefault());
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!block.submit || button.disabled) return;
+    const values = textValues(form, block.fields);
+    if (!values) {
+      note.textContent = FILL_IN;
+      return;
+    }
+    // One submission per form: the next reply brings a fresh form if one is needed.
+    form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('input, button, textarea')
+      .forEach((control) => { control.disabled = true; });
+    onAction({ kind: 'form', form: block.submit, values, label: block.submit_label });
+  });
   // Tag chips show their checked state (no :has() needed).
   form.addEventListener('change', (event) => {
     const input = event.target as HTMLInputElement;

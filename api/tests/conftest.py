@@ -95,7 +95,7 @@ def clean_state(database):
     """Empty conversations/messages, remove self-serve sign-ups (slug t-...) and empty the
     Redis test db before each test."""
     with psycopg.connect(OWNER_URL, autocommit=True) as conn:
-        conn.execute("TRUNCATE messages, conversations")
+        conn.execute("TRUNCATE messages, conversations, order_connections")
         conn.execute("DELETE FROM tenants WHERE slug LIKE 't-%'")      # cascades to users, keys, crawls
         conn.execute("UPDATE site_keys SET installed_at = NULL")
     redis.from_url(os.environ["REDIS_URL"]).flushdb()

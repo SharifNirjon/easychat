@@ -6,7 +6,7 @@ import { type FailureKind, streamChat } from './api';
 import { MAX_DISPLAY_MESSAGES, TEASER_DELAY_MS } from './config';
 import { el } from './dom';
 import { loadState, saveState, type SavedState } from './store';
-import type { Action, Block, ChatMessage, WidgetConfig } from './types';
+import type { Action, Block, ChatMessage, FormName, FormSubmit, WidgetConfig } from './types';
 import { safeUrl } from './ui/blocks/shared';
 import { createTeaser, Launcher } from './ui/launcher';
 import { Panel } from './ui/panel';
@@ -23,6 +23,8 @@ export class Widget {
   private teaser: HTMLElement | null = null;
   private state: SavedState;
   private inFlight: AbortController | null = null;
+  /** A submitted form not yet stored by the server. Memory only: emails and codes are never persisted. */
+  private pendingForm: { name: FormName; values: Record<string, string> } | null = null;
 
   constructor(
     private readonly siteKey: string,
@@ -77,10 +79,14 @@ export class Widget {
     this.persist();
   }
 
-  /** A tap on a chip, button, card or home tile. Links are normally plain <a> elements. */
-  private handleAction(action: Action): void {
+  /** A tap on a chip, button, card or home tile, or a submitted form. Links are normally plain <a> elements. */
+  private handleAction(action: Action | FormSubmit): void {
     if (action.kind === 'send') {
       this.panel.trySend(action.text);
+      return;
+    }
+    if (action.kind === 'form') {
+      this.submitForm(action);
       return;
     }
     const href = safeUrl(action.url);
@@ -94,6 +100,18 @@ export class Widget {
     this.panel.setHomeVisible(false);
     this.panel.messages.clearTransient();
     this.panel.messages.addUser(text);
+    this.panel.scrollToBottom();
+    void this.requestReply();
+  }
+
+  /** Send a chat form's values; the visitor's bubble shows only the button's label. */
+  private submitForm(submit: FormSubmit): void {
+    if (!this.state.conversationId) return; // forms only appear inside a conversation
+    this.state.unsent = null;
+    this.pendingForm = { name: submit.form, values: submit.values };
+    this.remember({ role: 'user', content: submit.label });
+    this.panel.messages.clearTransient();
+    this.panel.messages.addUser(submit.label);
     this.panel.scrollToBottom();
     void this.requestReply();
   }
@@ -117,12 +135,16 @@ export class Widget {
     let bubble: ReturnType<typeof list.startReply> | null = null;
 
     await streamChat(
-      { siteKey: this.siteKey, conversationId: this.state.conversationId, message: this.state.unsent },
+      {
+        siteKey: this.siteKey, conversationId: this.state.conversationId, message: this.state.unsent,
+        form: this.pendingForm,
+      },
       {
         onConversation: (id) => {
-          // The server has stored the visitor's message under this conversation.
+          // The server has stored the visitor's message (or the form's summary) under this conversation.
           this.state.conversationId = id;
           this.state.unsent = null;
+          this.pendingForm = null;
           this.persist();
         },
         onToken: (text) => {
@@ -164,6 +186,7 @@ export class Widget {
     if (kind !== 'conversation-gone') return;
     // The server no longer has this chat: Retry starts a new one with the last question.
     const lastUser = [...this.state.messages].reverse().find((m) => m.role === 'user');
+    this.pendingForm = null; // a form belongs to its conversation: it can't move to a new one
     this.state.conversationId = null;
     this.state.unsent = lastUser?.content ?? null;
     this.persist();

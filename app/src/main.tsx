@@ -1,6 +1,6 @@
 /**
  * easychat onboarding app (roadmap step 7): email -> website -> assistant -> learning ->
- * try it -> install. Renders everything from GET /api/onboarding and polls it while something
+ * try it -> install, then optional order tracking (step 8). Renders everything from GET /api/onboarding and polls it while something
  * is happening (a crawl, or waiting for the widget to appear on the owner's site).
  */
 import { render } from 'preact';
@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'preact/hooks';
 import { api, ApiError, crawlActive, type OnboardingState } from './api';
 import { AssistantStep } from './steps/Assistant';
 import { InstallStep } from './steps/Install';
+import { OrdersStep } from './steps/Orders';
 import { CrawlMeter, LearningStep } from './steps/Learning';
 import { SignIn, Verify } from './steps/SignIn';
 import { TryStep } from './steps/TryIt';
@@ -18,13 +19,14 @@ import './styles.css';
 const POLL_MS = 2500;
 const SIGNIN_HASH = '#signin=';
 
-type StepId = 'website' | 'assistant' | 'learning' | 'try' | 'install';
+type StepId = 'website' | 'assistant' | 'learning' | 'try' | 'install' | 'orders';
 const STEPS: { id: StepId; label: string }[] = [
   { id: 'website', label: 'Your website' },
   { id: 'assistant', label: 'Your assistant' },
   { id: 'learning', label: 'Learning your site' },
   { id: 'try', label: 'Try it' },
   { id: 'install', label: 'Install' },
+  { id: 'orders', label: 'Order tracking' },
 ];
 
 /** Where to land after loading: the first thing still to do. */
@@ -119,6 +121,7 @@ function App() {
         {step === 'learning' && <LearningStep state={current} onUpdate={update} onNext={() => setStep('try')} />}
         {step === 'try' && <TryStep state={current} onNext={() => setStep('install')} />}
         {step === 'install' && <InstallStep state={current} />}
+        {step === 'orders' && <OrdersStep state={current} onChange={() => void load()} />}
       </main>
     </div>
   );

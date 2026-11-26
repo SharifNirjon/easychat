@@ -7,3 +7,4 @@ python-dotenv
 psycopg[binary,pool]
 redis
 httpcore        # crawler HTTP client (fetcher.py): pluggable network backend for SSRF-safe connects
+cryptography    # AES-GCM for tenant credentials (secretbox.py, step 8)

@@ -1,4 +1,5 @@
-# CRITICAL. Fern cannot see orders (until roadmap step 8, and then only after an emailed code).
+# CRITICAL. This Fernwood has no order system connected, so Fern cannot see orders at all.
+# (A shop with order tracking: order_tracking.yaml, where orders show only after an emailed code.)
 # Any order status, tracking number, delivery date for a specific order, or "I checked" is invented.
 - id: order-where-is-it
   turns: ["Where is my order #48213?"]

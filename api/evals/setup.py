@@ -3,10 +3,12 @@ changing anything in evals/sites/ or evals/seeds/ (unchanged pages are skipped):
 
     cd api && python -m evals.setup
 
-Two fictional tenants (evals/seeds/):
-  * eval-fernwood: the shop every case talks to. Its site (evals/sites/fernwood/) has real
+Three fictional tenants (evals/seeds/):
+  * eval-fernwood: the shop most cases talk to. Its site (evals/sites/fernwood/) has real
     policy pages, blog articles whose *example* policies differ from the real ones, and a
-    reviews page with planted prompt injections.
+    reviews page with planted prompt injections. No order system: it can't look orders up.
+  * eval-fernwood-orders: the same shop with order tracking connected (roadmap step 8), to
+    demo_shop.py's order API, which evals.run serves while it runs (cases with `orders:`).
   * eval-rival: a second tenant whose page holds a secret string. No Fernwood reply may ever
     contain it (row-level security should make that impossible; the evals prove it).
 
@@ -25,7 +27,9 @@ from pathlib import Path
 import psycopg
 
 import db
+import demo_shop
 import limits
+import order_connections
 import seed_tenant
 from config import settings
 from crawl import tenant_by_slug
@@ -34,7 +38,11 @@ from models import TenantSeed
 
 EVALS_DIR = Path(__file__).resolve().parent
 SITES_DIR = EVALS_DIR / "sites"
-SEEDS = [EVALS_DIR / "seeds" / "fernwood.json", EVALS_DIR / "seeds" / "rival.json"]
+SEEDS = [EVALS_DIR / "seeds" / name for name in ("fernwood.json", "fernwood-orders.json", "rival.json")]
+ORDERS_SLUG = "eval-fernwood-orders"
+# The demo order API's Bearer secret. A fixture value for a local test server, not a real secret.
+EVAL_ORDER_SECRET = "ec_ord_eval-fixture-not-a-secret"
+EVAL_ORDER_API = f"http://{demo_shop.HOST}:{demo_shop.PORT}/orders"
 SITE_HOST, SITE_PORT = "127.0.0.1", 8799     # must match the URLs in the seeds and sitemaps
 
 
@@ -76,6 +84,9 @@ async def index_sites(slugs: list[str]) -> None:
                   f"{stats.pages_skipped} skipped, {stats.pages_failed} failed, {stats.pages_removed} removed")
             if stats.pages_failed or stats.pages_skipped:
                 sys.exit(f"{slug}: some fixture pages were not indexed; fix evals/sites/ first")
+            if slug == ORDERS_SLUG:            # order tracking, against demo_shop.py (needs SECRETS_KEY)
+                await order_connections.save(tenant_id, "api", EVAL_ORDER_API, {"secret": EVAL_ORDER_SECRET})
+                print(f"{slug}: order API connected ({EVAL_ORDER_API})")
     finally:
         await db.close_pool()
         await limits.client.aclose()

@@ -1,6 +1,6 @@
 /** Talks to the easychat API: tenant config + streamed chat replies (SSE over fetch). */
 import { API_BASE } from './config';
-import type { Block, WidgetConfig } from './types';
+import type { Block, FormName, WidgetConfig } from './types';
 
 const NETWORK_ERROR = "I couldn't reach the server. Check your connection and try again.";
 const INTERRUPTED_ERROR = 'The reply was interrupted. Please try again.';
@@ -35,6 +35,8 @@ export interface ChatTurn {
   conversationId: string | null;
   /** null = retry: ask the server to answer the history it already has. */
   message: string | null;
+  /** A submitted chat form, sent instead of a message (order tracking). */
+  form?: { name: FormName; values: Record<string, string> } | null;
 }
 
 interface SseEvent {
@@ -81,9 +83,10 @@ async function failureFor(res: Response): Promise<{ message: string; kind: Failu
  * unless the request was aborted via `signal` (then neither).
  */
 export async function streamChat(turn: ChatTurn, handlers: StreamHandlers, signal: AbortSignal): Promise<void> {
-  const body: Record<string, string> = { site_key: turn.siteKey };
+  const body: Record<string, unknown> = { site_key: turn.siteKey };
   if (turn.conversationId) body.conversation_id = turn.conversationId;
-  if (turn.message !== null) body.message = turn.message;
+  if (turn.form) body.form = turn.form;
+  else if (turn.message !== null) body.message = turn.message;
 
   try {
     const res = await fetch(`${API_BASE}/chat`, {

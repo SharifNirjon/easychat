@@ -1086,6 +1086,14 @@
   color: var(--ec-faint);
 }
 
+/* One-time code (order tracking): big, spaced digits that are easy to check against the email. */
+.ec-field--code {
+  font-size: 20px;
+  letter-spacing: 0.4em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .ec-check {
   display: flex;
   align-items: center;

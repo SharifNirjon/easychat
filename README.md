@@ -13,6 +13,7 @@ Multi-tenant AI chatbot SaaS. MVP: "Aria" widget + admin console. See `CLAUDE.md
 | `widget/` | Embeddable chat widget (vanilla TS → one `widget.js` + self-hosted fonts) |
 | `app/` | Onboarding web app (Preact), served by the API at `/app/` |
 | `api/auth.py`, `api/onboarding.py`, `api/worker.py` | Self-serve sign-up, onboarding API, background worker |
+| `api/order_*.py`, `api/secretbox.py` | Order tracking: Shopify / generic order API, email codes, encrypted credentials |
 
 ## Prerequisites
 Docker Desktop, Node 20+, curl. Python 3.12 is optional — everything Python also runs in Docker.
@@ -211,6 +212,42 @@ and the widget preview are tied to that origin), enter any email, and open the l
 - In Docker: `docker compose --profile api up --build api worker`. The API image doesn't contain
   the built app yet (step 14 hosts it), so use the local API for `/app/`.
 
+## 11. Order tracking
+A customer asks "where's my order?", enters the order number and checkout email, gets a 6-digit
+code by email, and sees the tracking card (widget design 6). Nobody sees an order without that code.
+- **Who decides:** code, never the model. Order questions get a form; the answer to the form is
+  the same whether or not the order and email match (the check runs after the reply). The right
+  code lets *that chat* see *that order* for 30 minutes. Follow-up questions go to the model with
+  only that order's tracking facts (no email, name or address), and the output guard stops any
+  reply that names another order or tracking number. The conversation stores a note, not the card.
+- **Limits:** codes last 10 minutes, 5 wrong tries cancel one, 3 code emails per order per hour,
+  5 lookups per chat and 10 per client per hour.
+- **Setup:** set `SECRETS_KEY` in `api/.env` (it encrypts shops' credentials; see `.env.example`),
+  run `python migrate.py`, then in the app's **Order tracking** step connect either:
+  - **Shopify:** in Shopify's Dev Dashboard create an app for the store with `read_orders` (and
+    customer email access), install it, and enter its client ID and secret. Older admin-created apps
+    can use their `shpat_` access token instead. Only `*.myshopify.com` is accepted. (One-click install
+    for any store needs a public URL and Shopify app review: step 14.)
+  - **Your own system:** an https endpoint (`http://localhost`/`127.0.0.1` only in local/test). easychat
+    creates a secret, shown once, and calls `GET <url>?order_number=MR-20417` with
+    `Authorization: Bearer <secret>`. Answer `404` for unknown orders, or `200` with JSON (extra
+    fields are ignored, and never shown):
+    ```json
+    {"order_number": "MR-20417", "email": "customer@example.com", "status": "out_for_delivery",
+     "placed_at": "2026-10-28T10:00:00+06:00", "item_count": 2,
+     "events": [{"status": "shipped", "at": "2026-10-30T08:00:00+06:00", "location": "Dhaka hub"}],
+     "estimated_delivery": "2026-10-31T18:00:00+06:00",
+     "carrier": {"name": "Pathao Courier", "tracking_number": "PTH-88213", "tracking_url": "https://..."}}
+    ```
+    `status` (and each event's) is one of `placed packed shipped out_for_delivery delivered`
+    (`cancelled` for the order). No redirects are followed.
+- **Local demo** (the fictional Mirela shop): choose "My own system", enter
+  `http://127.0.0.1:8790/orders`, then run `python demo_shop.py --secret <the secret> --email <your
+  email>` in `api/`. In the widget (`try.html?key=…`) ask "Where is my order #MR-20417?"; the code
+  arrives in Mailpit. MR-20388 is delivered, MR-20311 cancelled.
+- **End-to-end check** (the step 8 "Done when"), against the running API and Mailpit:
+  `python order_check.py` (`--skip-chat` without OpenRouter credits).
+
 ## Config notes
 - `APP_ENV` is required: `local | test | staging | production`. `/docs` is only served in local/test.
 - `PRIVACY_MODE` defaults to `strict`: `{"data_collection":"deny","zdr":true,"sort":"latency"}`.
@@ -227,3 +264,6 @@ and the widget preview are tied to that origin), enter any email, and open the l
 - `VITE_API_BASE` (widget/.env) is baked into `widget.js` at build time.
 - Onboarding: `APP_BASE_URL` (the app's address; https outside local/test), `WIDGET_URL` (put in
   script tags), `SMTP_*` + `MAIL_FROM` (Mailpit locally), `SIGNUPS_PER_DAY` (kill switch).
+- `SECRETS_KEY` (step 8): 32 random bytes, base64. Encrypts shops' order-system credentials and keys
+  the one-time-code hashes. Required in staging/production; tests make a throwaway one. Changing it
+  makes stored connections unreadable (shops reconnect), so treat it like a database password.

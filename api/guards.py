@@ -16,8 +16,9 @@ Output side (while the reply streams):
                      far. On a violation the stream stops and main.py swaps in a safe reply
                      (SSE `replace` event). Violations:
     prompt_leak          the per-request canary or our prompt's wording appears
-    order_claim          an order status / tracking claim: the assistant can't see orders yet
-                         (roadmap step 8), so any such claim is invented
+    order_claim          without a verified order: any order status / tracking claim (the
+                         assistant can't see orders, so it is invented). With one (step 8,
+                         order_tracking.py): any order or tracking number other than that order's
     ungrounded_contact   an email or phone number that isn't in the knowledge, the tenant's
                          config or the conversation: invented or planted contact details
     ungrounded_link      a link to a host that isn't the tenant's own
@@ -44,8 +45,15 @@ SAFE_REPLIES = {
 }
 
 
-def safe_reply(violation: str, company: str) -> str:
+# ORDER_CLAIM's replacement when the tenant has order tracking (step 8): point to the safe way in.
+ORDER_CLAIM_TRACKABLE = ("I can only share order details after a quick check. Type \"track my order\" and "
+                         "I'll email a code to the address you used at checkout.")
+
+
+def safe_reply(violation: str, company: str, orders_enabled: bool = False) -> str:
     """The replacement text for a reply the output guard blocked."""
+    if violation == ORDER_CLAIM and orders_enabled:
+        return ORDER_CLAIM_TRACKABLE
     return SAFE_REPLIES[violation].format(company=company)
 
 # Characters removed from visitor messages. Kept on purpose: ZWJ/ZWNJ (U+200C/D: emoji and
@@ -123,6 +131,22 @@ MIN_PHONE_DIGITS = 8
 MAX_PHONE_DIGITS = 15        # E.164: longer digit runs are not one phone number
 
 
+# An order or tracking number in a reply: '#MR-20417', 'order 1001', 'tracking number: PTH-88213'.
+_ORDER_REF = re.compile(r"#\s?([A-Z0-9][A-Z0-9_-]{2,31})"
+                        r"|\b(?:order|tracking)\s*(?:number|no\.?|id|code)?\s*(?:is\s*)?[:#]?\s*"
+                        r"([A-Z]{0,6}-?\d[A-Z0-9_-]{1,30})", re.IGNORECASE)
+
+
+def order_references(text: str) -> list[str]:
+    """Order / tracking numbers mentioned in the text, uppercased, without '#' (must hold a digit)."""
+    refs = []
+    for match in _ORDER_REF.finditer(plain_punctuation(text)):
+        ref = (match.group(1) or match.group(2) or "").upper()
+        if any(ch.isdigit() for ch in ref):
+            refs.append(ref)
+    return refs
+
+
 def _sentence_around(text: str, start: int, end: int) -> str:
     """The sentence containing text[start:end]."""
     left = max((m.end() for m in _SENTENCE_END.finditer(text, 0, start)), default=0)
@@ -130,8 +154,20 @@ def _sentence_around(text: str, start: int, end: int) -> str:
     return text[left:right.start() if right else len(text)]
 
 
+# Typographic dashes and spaces models like to use ('MR‑20417' with U+2011, '6 pm' with U+202F).
+# Order checks see them as plain '-' and ' ', so a fancy hyphen can't hide an order number.
+_DASHES = re.compile("[‐-―−﹘﹣－]")            # hyphens, dashes, minus
+_SPACES = re.compile("[  -   　]")            # no-break and fixed-width spaces
+
+
+def plain_punctuation(text: str) -> str:
+    """Unicode dashes -> '-', Unicode spaces -> ' ' (same length, so positions are kept)."""
+    return _SPACES.sub(" ", _DASHES.sub("-", text))
+
+
 def order_claims(text: str) -> list[str]:
     """Statements of an order's status, tracking number or a lookup (conditional policy excluded)."""
+    text = plain_punctuation(text)
     found = []
     for pattern in (_ORDER_STATUS, _ORDER_NUMBER_STATUS, _TRACKING, _LOOKED_UP):
         for match in pattern.finditer(text):
@@ -188,14 +224,17 @@ class OutputGuard:
     """
     HOLD_CHARS = 64
 
-    def __init__(self, canary: str, fingerprints: tuple[str, ...], allowed_text: str, allowed_hosts: set[str]):
+    def __init__(self, canary: str, fingerprints: tuple[str, ...], allowed_text: str, allowed_hosts: set[str],
+                 order_refs: frozenset[str] | None = None):
         """`allowed_text`: knowledge, tenant config and conversation (where contact details may
-        come from). `allowed_hosts`: the tenant's own sites. `fingerprints`: prompt phrases."""
+        come from). `allowed_hosts`: the tenant's own sites. `fingerprints`: prompt phrases.
+        `order_refs`: the verified order's number and tracking number (None: no verified order)."""
         self.canary = canary.lower()
         self.fingerprints = tuple(f.lower() for f in fingerprints)
         self.allowed_text = allowed_text.lower()
         self.allowed_phones = set(phone_numbers(allowed_text))
         self.allowed_hosts = {bare_host(h) for h in allowed_hosts}
+        self.order_refs = None if order_refs is None else {r.upper() for r in order_refs}
         self.violation: str | None = None
         self._text = ""        # everything received so far
         self._released = 0     # how much of it has been shown
@@ -206,7 +245,10 @@ class OutputGuard:
         lowered = text.lower()
         if self.canary in lowered or any(f in lowered for f in self.fingerprints):
             return PROMPT_LEAK
-        if order_claims(text):
+        if self.order_refs is None:
+            if order_claims(text):
+                return ORDER_CLAIM
+        elif any(not self._ref_allowed(r, final) for r in order_references(text)):
             return ORDER_CLAIM
         # Mid-stream, a half-written email is still a substring of the real one, so this holds.
         if any(e not in self.allowed_text for e in emails(text)):
@@ -216,6 +258,10 @@ class OutputGuard:
         if any(not self._host_allowed(h, final) for h in link_hosts(text)):
             return UNGROUNDED_LINK
         return None
+
+    def _ref_allowed(self, ref: str, final: bool) -> bool:
+        """The verified order's own number (mid-stream: possibly half-written)."""
+        return any(a == ref or (not final and a.startswith(ref)) for a in self.order_refs or ())
 
     def _phone_allowed(self, digits: str, final: bool) -> bool:
         """A number from the allowed text (mid-stream: the start of one)."""

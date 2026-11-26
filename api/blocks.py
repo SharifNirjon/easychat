@@ -213,12 +213,13 @@ class TimelineBlock(Strict):
 
 
 class TextField(Strict):
-    """A one-line text, email, or multi-line (textarea) form field."""
-    kind: Literal["text", "email", "textarea"]
+    """A one-line text, email, multi-line (textarea) or one-time-code field, optionally pre-filled."""
+    kind: Literal["text", "email", "textarea", "code"]
     name: FieldName
     label: Label
     placeholder: Annotated[str, Field(max_length=80)] = ""
     required: bool = False
+    value: Annotated[str, Field(max_length=80)] | None = None
 
 
 class CheckboxField(Strict):
@@ -246,12 +247,18 @@ class TagsField(Strict):
 FormField = Annotated[TextField | CheckboxField | RatingField | TagsField, Field(discriminator="kind")]
 
 
+# Forms the server knows how to handle (order_tracking.py). A form without `submit` is shown but
+# can't be sent yet (the fixed set of chat forms arrives in roadmap step 9).
+FormName = Literal["order_lookup", "order_code"]
+
+
 class FormBlock(Strict):
-    """A small form (designs 8, 10). Rendered now; submitting is wired up in roadmap step 9."""
+    """A small form (designs 6, 8, 10). With `submit`, the widget sends its values to /chat."""
     type: Literal["form"]
     title: Line | None = None
     fields: Annotated[list[FormField], Field(min_length=1, max_length=6)]
     submit_label: Label
+    submit: FormName | None = None
 
 
 class Source(Strict):
