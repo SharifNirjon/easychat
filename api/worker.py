@@ -5,8 +5,10 @@
 Jobs:
   crawl            {tenant_id, crawl_job_id}  index the tenant's website (onboarding and "crawl again")
   deliver_request  {tenant_id, request_id}    email a chat-form request to the team + webhook (step 9)
+  publish_kb       {tenant_id}                index the team's changed knowledge entries (step 10)
 
-Between jobs, once an hour, expired requests are deleted (retention, team_requests.purge_expired).
+Between jobs, once an hour, retention runs: expired requests (team_requests.purge_expired) and
+conversations older than each tenant's chat retention (db.purge_old_conversations) are deleted.
 
 One worker process is enough for the MVP (see jobs.py on crash recovery). Each job runs with
 the API's database role inside the tenant's RLS scope, exactly like a request.
@@ -18,6 +20,7 @@ from uuid import UUID
 import redis.asyncio as aioredis
 
 import db
+import kb_admin
 import limits
 import team_requests
 from config import settings
@@ -57,7 +60,12 @@ async def deliver_request_job(payload: dict) -> None:
     await team_requests.deliver(UUID(payload["tenant_id"]), UUID(payload["request_id"]))
 
 
-HANDLERS = {"crawl": crawl_job, team_requests.DELIVER_JOB: deliver_request_job}
+async def publish_kb_job(payload: dict) -> None:
+    """Make the team's changed knowledge entries live (raises to be retried)."""
+    await kb_admin.publish(UUID(payload["tenant_id"]))
+
+
+HANDLERS = {"crawl": crawl_job, team_requests.DELIVER_JOB: deliver_request_job, kb_admin.PUBLISH_JOB: publish_kb_job}
 
 
 async def run_one(queue: RedisQueue, job: Job, raw: str) -> None:
@@ -98,6 +106,8 @@ async def purge_if_due(last_run: float) -> float:
         return last_run
     try:
         await team_requests.purge_expired()
+        if deleted := await db.purge_old_conversations():
+            log.info("retention: deleted %d old conversations", deleted)
     except Exception:
         log.exception("retention purge failed")
     return now

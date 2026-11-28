@@ -468,15 +468,17 @@ def delete_form() -> dict:
             "fields": [{"kind": "checkbox", "name": "confirm", "label": DELETE_CONFIRM_LABEL, "required": True}]}
 
 
-async def delete_conversation(tenant: Tenant, conversation_id: UUID) -> None:
-    """Delete the conversation, its messages (cascade) and requests, and its Redis state."""
-    async with db.tenant_tx(tenant.id) as conn:
+async def delete_conversation(tenant_id: UUID, conversation_id: UUID) -> bool:
+    """Delete the conversation, its messages (cascade) and requests, and its Redis state (the
+    visitor's "delete my data", or the team from the inbox). False if there was no such chat."""
+    async with db.tenant_tx(tenant_id) as conn:
         await team_requests.delete_for_conversation(conn, conversation_id)
-        await conn.execute("DELETE FROM conversations WHERE id = %s", (conversation_id,))
-    await limits.client.delete(_offered_key(tenant.id, conversation_id))
-    await order_tracking.forget(tenant.id, conversation_id)
-    await email_codes.forget(TRANSCRIPT_PURPOSE, tenant.id, conversation_id)
-    log.info("conversation deleted at the visitor's request in tenant %s", tenant.slug)
+        cur = await conn.execute("DELETE FROM conversations WHERE id = %s", (conversation_id,))
+    await limits.client.delete(_offered_key(tenant_id, conversation_id))
+    await order_tracking.forget(tenant_id, conversation_id)
+    await email_codes.forget(TRANSCRIPT_PURPOSE, tenant_id, conversation_id)
+    log.info("conversation deleted in tenant %s", tenant_id)
+    return cur.rowcount > 0
 
 
 async def submit_delete(tenant: Tenant, conversation_id: UUID, form: FormSubmission) -> ScriptedReply:
@@ -485,7 +487,7 @@ async def submit_delete(tenant: Tenant, conversation_id: UUID, form: FormSubmiss
         return ScriptedReply(EXPIRED_TEXT, [])
     if text_value(form.values, "confirm") != YES:
         return ScriptedReply(NOT_DELETED_TEXT, [delete_form()])
-    await delete_conversation(tenant, conversation_id)
+    await delete_conversation(tenant.id, conversation_id)
     return ScriptedReply(DELETED_TEXT, [], forget=True)
 
 

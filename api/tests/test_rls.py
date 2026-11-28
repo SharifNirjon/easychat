@@ -151,11 +151,58 @@ def test_resolve_login_returns_only_the_exact_email(app_db, two_users):
     assert app_db.execute("SELECT * FROM resolve_login('%')").fetchone() is None
 
 
-def test_api_role_cannot_create_users_or_tenants_directly(app_db, two_users):
-    """Accounts are only created through create_signup(); the API role can't insert them."""
+def test_api_role_cannot_create_owners_or_tenants_directly(app_db, two_users):
+    """Accounts (tenant + owner) are only created through create_signup(). Since step 10 the API
+    role may add MEMBERS (invites), only to its own tenant, and never an owner."""
     as_tenant(app_db, two_users["tenant-a"])
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         app_db.execute("INSERT INTO users (tenant_id, email) VALUES (%s, 'x@y.example')", (two_users["tenant-a"],))
+    app_db.rollback()
+    as_tenant(app_db, two_users["tenant-a"])
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        app_db.execute("INSERT INTO users (tenant_id, email, role) VALUES (%s, 'm@y.example', 'member')",
+                       (two_users["tenant-b"],))
+    app_db.rollback()
+    as_tenant(app_db, two_users["tenant-a"])
+    app_db.execute("INSERT INTO users (tenant_id, email, role) VALUES (%s, 'm@y.example', 'member')",
+                   (two_users["tenant-a"],))
+    assert app_db.execute("DELETE FROM users WHERE role = 'owner'").rowcount == 0     # owners can't be removed
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        app_db.execute("INSERT INTO tenants (slug, name, config) VALUES ('t-x', 'x', '{}')")
+
+
+# --- admin (step 10) ----------------------------------------------------------------------------
+
+def test_entries_and_audit_are_isolated_per_tenant(app_db, owner_db):
+    """A tenant sees only its own knowledge entries and audit trail; the audit can't be edited."""
+    ids = tenant_ids(owner_db)
+    owner_db.execute("INSERT INTO kb_entries (tenant_id, section, title, body) VALUES (%s, 'S', 'B only', 'x')",
+                     (ids["tenant-b"],))
+    owner_db.execute("INSERT INTO admin_audit (tenant_id, user_email, action) VALUES (%s, 'b@b.example', 'x')",
+                     (ids["tenant-b"],))
+    as_tenant(app_db, ids["tenant-a"])
+    for table in ("kb_entries", "admin_audit"):
+        assert app_db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    assert app_db.execute("DELETE FROM kb_entries").rowcount == 0
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        app_db.execute("DELETE FROM admin_audit")
+
+
+def test_chat_retention_follows_each_tenants_setting(app_db, owner_db, two_conversations):
+    """purge_old_conversations(): tenant A keeps chats 7 days, B the default 90. A 30-day-old
+    chat goes for A only; the function leaves no tenant set behind."""
+    ids = tenant_ids(owner_db)
+    owner_db.execute("UPDATE tenants SET config = jsonb_set(config, '{requests}', '{\"chat_retention_days\": 7}') "
+                     "WHERE slug = 'tenant-a'")
+    owner_db.execute("UPDATE conversations SET last_message_at = now() - interval '30 days'")
+    try:
+        assert app_db.execute("SELECT purge_old_conversations()").fetchone()[0] == 1
+        assert app_db.execute("SELECT current_setting('app.tenant_id', true)").fetchone()[0] in ("", None)
+        app_db.commit()
+        left = {r[0] for r in owner_db.execute("SELECT tenant_id::text FROM conversations")}
+        assert left == {ids["tenant-b"]}
+    finally:
+        owner_db.execute("UPDATE tenants SET config = config - 'requests' WHERE slug = 'tenant-a'")
 
 
 # --- order connections (step 8) -------------------------------------------------------------

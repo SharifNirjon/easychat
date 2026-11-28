@@ -138,12 +138,12 @@ async def _save_progress(tenant_id: UUID, job_id: UUID, stats: CrawlStats, statu
                            {**fields, "status": status, "error": error and error[:500], "job_id": job_id})
 
 
-async def _existing_hash(tenant_id: UUID, url: str) -> str | None:
-    """Content hash stored for this URL by an earlier crawl, or None if it is new."""
+async def _existing(tenant_id: UUID, url: str) -> tuple[str | None, bool]:
+    """(content hash stored for this URL by an earlier crawl or None if new, whether the team hid it)."""
     async with db.tenant_tx(tenant_id) as conn:
-        cur = await conn.execute("SELECT content_hash FROM kb_pages WHERE url = %s", (url,))
+        cur = await conn.execute("SELECT content_hash, hidden FROM kb_pages WHERE url = %s", (url,))
         row = await cur.fetchone()
-        return row["content_hash"] if row else None
+        return (row["content_hash"], row["hidden"]) if row else (None, False)
 
 
 async def _mark_seen(tenant_id: UUID, job_id: UUID, url: str) -> None:
@@ -206,9 +206,11 @@ async def _replace_page(tenant_id: UUID, job_id: UUID, url: str, title: str, kin
 
 
 async def _remove_unseen(tenant_id: UUID, job_id: UUID) -> int:
-    """Delete pages this crawl didn't see (their chunks/products cascade); return how many."""
+    """Delete pages this crawl didn't see (their chunks/products cascade); return how many.
+    The team's own entries (kind 'entry', step 10) are never crawled, so never removed here."""
     async with db.tenant_tx(tenant_id) as conn:
-        cur = await conn.execute("DELETE FROM kb_pages WHERE last_job_id IS DISTINCT FROM %s", (job_id,))
+        cur = await conn.execute("DELETE FROM kb_pages WHERE last_job_id IS DISTINCT FROM %s AND kind <> 'entry'",
+                                 (job_id,))
         return cur.rowcount
 
 
@@ -275,7 +277,12 @@ async def crawl_page(fetcher: Fetcher, tenant_id: UUID, job_id: UUID, url: str, 
 
     kind = page_kind(page.json_ld)
     content_hash = _content_hash(page, kind, products)
-    if await _existing_hash(tenant_id, key) == content_hash:
+    stored_hash, hidden = await _existing(tenant_id, key)
+    if hidden:                                       # the team hid it (step 10): keep it hidden, unindexed
+        await _mark_seen(tenant_id, job_id, key)
+        stats.pages_skipped += 1
+        return "skipped: hidden by the team", page
+    if stored_hash == content_hash:
         await _mark_seen(tenant_id, job_id, key)
         stats.pages_unchanged += 1
         return "unchanged", page

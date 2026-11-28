@@ -50,7 +50,7 @@ We dogfood on Culpine first; no Culpine-specific logic may be hardcoded — ever
 | 7 | Self-serve onboarding: magic link → URL or sitemap upload → auto branding → crawl progress → preview → copy script tag → "installed ✓"; free-plan caps | new tenant from email to working widget in < 5 min, no staff | done (onboarding_check.py: 20.3 s email → installed, real API + worker + Mailpit + model) |
 | 8 | Commerce: Shopify connect + generic order-lookup API; order tracking with email OTP (widget design 6) | verified visitor sees timeline; wrong code/email reveals nothing | done (order_check.py 6/6 live; evals order_tracking 11/11 ×3, deterministic; Shopify only against a fake: no dev store) |
 | 9 | Chat forms (fixed set): return request (design 7), lead capture with consent (W-07, W-08), talk to a person, email transcript, delete my data | requests reach shop/team by email + webhook; nothing saved without consent | done (requests_check.py 5/5 live; evals requests 8/10 ×3, 2 not run: OpenRouter credits) |
-| 10 | Admin v0: inbox, leads, KB, settings/install (A-01, A-04, A-05, A-06) | team reads chats, exports leads, edits + publishes KB | todo |
+| 10 | Admin v0: inbox, leads, KB, settings/install (A-01, A-04, A-05, A-06) | team reads chats, exports leads, edits + publishes KB | done (admin_check.py 5/5 live; 518 tests) |
 | 11 | Files + voice (W-05, W-06, mic) | scanned, parsed, answered; bad types rejected | todo |
 | 12 | Multilingual/RTL, chat menu, limit UI (W-11, W-12, W-14) | matches designs | todo |
 | 13 | Dashboard + Langfuse (A-02, A-03) | traces + cost per chat visible | todo |
@@ -73,7 +73,7 @@ Onboarding notes (step 7): own Redis job queue (`api/jobs.py`, not arq: arq pins
 `python worker.py`; Preact app in `app/` served by the API at `/app/`. Sign-in tokens and sessions
 live in Redis (hashed); accounts are created only via `create_signup()` (SECURITY DEFINER), and
 logins resolve via `resolve_login()`. Plan caps live in `models.TenantLimits` (no `plans` table).
-One email = one tenant until team invites (step 10).
+One email = one tenant; since step 10 an owner can invite members (same rule: one email, one tenant).
 
 Order notes (step 8): `order_tracking.py` decides access in code; the model never does. Lookup
 answers are identical whether or not order + email match (the check runs in the background, so
@@ -91,7 +91,14 @@ the job holds ids only; `team_requests.deliver` emails the team and POSTs an HMA
 Returns are requests (no store writes, no amounts); guard `promise_claim` stops invented approvals.
 One-time codes for any purpose live in `email_codes.py` (orders, transcript).
 
+Admin notes (step 10): `admin.py` (inbox, leads + CSV, knowledge, team) inside the same Preact
+app. Sessions re-read the user row on every request (role, removal). Knowledge entries are
+drafts until the worker job `publish_kb` indexes them as `kb_pages` of kind `entry` (crawls
+never remove them; hidden pages lose their chunks and are skipped). Privacy actions go to
+`admin_audit`. Chat retention: `purge_old_conversations()` per tenant, hourly.
+
 Data-model notes: `schema_migrations` is the only table without `tenant_id` (infrastructure, not
 tenant data). The API connects as a non-owner role so RLS always applies. SECURITY DEFINER
 functions are the only cross-tenant paths, each narrow: `resolve_site_key()` (the exact key given),
-`resolve_login()` / `create_signup()` (one email), `purge_expired_requests()` (deletes expired rows only).
+`resolve_login()` / `create_signup()` (one email), `purge_expired_requests()` / `purge_old_conversations()` (retention only; each DELETE names its
+tenant explicitly, since a superuser owner would bypass RLS). The API may insert/delete only `member` users.

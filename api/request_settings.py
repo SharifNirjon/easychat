@@ -48,6 +48,7 @@ async def summary(tenant_id, config: TenantConfig) -> dict:
         "sends_to": await team_requests.notify_address(tenant_id, requests),
         "booking_url": str(requests.booking_url) if requests.booking_url else None,
         "retention_days": requests.retention_days,
+        "chat_retention_days": requests.chat_retention_days,
         "leads": requests.leads,
         "returns": requests.returns is not None,
         "return_window_days": (requests.returns or ReturnsConfig()).window_days,
@@ -60,6 +61,7 @@ class SettingsIn(BaseModel):
     notify_email: str | None = Field(default=None, max_length=254)     # None or "": the account's email
     booking_url: str | None = Field(default=None, max_length=500)
     retention_days: int = Field(ge=7, le=365)
+    chat_retention_days: int = Field(default=90, ge=7, le=730)
     leads: bool
     returns: bool
     return_window_days: int = Field(ge=1, le=365)
@@ -78,7 +80,8 @@ async def save_settings(body: SettingsIn, session: Session = Depends(current_ses
         returns = current.model_copy(update={"window_days": body.return_window_days})
     try:
         requests = RequestsConfig(notify_email=email, booking_url=(body.booking_url or "").strip() or None,
-                                  retention_days=body.retention_days, leads=body.leads, returns=returns)
+                                  retention_days=body.retention_days,
+                                  chat_retention_days=body.chat_retention_days, leads=body.leads, returns=returns)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="The booking link must be an https:// address") from exc
     stored = config.model_dump(mode="json")

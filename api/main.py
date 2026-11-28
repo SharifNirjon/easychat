@@ -7,6 +7,8 @@ Routes:
   POST /chat                -> Server-Sent Events stream of the assistant's reply
   /api/auth/*, /api/onboarding/*  -> self-serve sign-up and onboarding (step 7: auth.py, onboarding.py)
   /api/onboarding/orders/*  -> connect the shop's order system (step 8: order_connections.py)
+  /api/onboarding/requests/* -> where chat-form requests go (step 9: request_settings.py)
+  /api/admin/*              -> the team's console: inbox, leads, knowledge, team (step 10: admin.py)
   /app/                     -> the onboarding web app (app/dist, built from app/), if built
 
 /config and /chat resolve the tenant from the public site key and require the browser's
@@ -67,6 +69,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import admin
 import auth
 import chat_forms
 import conversations
@@ -140,6 +143,7 @@ app.include_router(auth.router)
 app.include_router(onboarding.router)
 app.include_router(order_connections.router)
 app.include_router(request_settings.router)
+app.include_router(admin.router)
 
 # The onboarding app (Preact, built into app/dist by `npm run build` in app/). Same origin as the
 # API, so its session cookie needs no cross-site rules. Not built = not served.

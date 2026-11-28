@@ -7,6 +7,7 @@ import { render } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 
 import { api, ApiError, crawlActive, type OnboardingState } from './api';
+import { InboxStep, KnowledgeStep, LeadsStep, TeamStep } from './steps/Admin';
 import { AssistantStep } from './steps/Assistant';
 import { InstallStep } from './steps/Install';
 import { OrdersStep } from './steps/Orders';
@@ -20,7 +21,8 @@ import './styles.css';
 const POLL_MS = 2500;
 const SIGNIN_HASH = '#signin=';
 
-type StepId = 'website' | 'assistant' | 'learning' | 'try' | 'install' | 'orders' | 'requests';
+type StepId = 'website' | 'assistant' | 'learning' | 'try' | 'install' | 'orders' | 'requests'
+  | 'inbox' | 'leads' | 'knowledge' | 'team';
 const STEPS: { id: StepId; label: string }[] = [
   { id: 'website', label: 'Your website' },
   { id: 'assistant', label: 'Your assistant' },
@@ -30,11 +32,18 @@ const STEPS: { id: StepId; label: string }[] = [
   { id: 'orders', label: 'Order tracking' },
   { id: 'requests', label: 'Requests & privacy' },
 ];
+/** The team's console (step 10), shown under the setup steps. */
+const ADMIN: { id: StepId; label: string }[] = [
+  { id: 'inbox', label: 'Inbox' },
+  { id: 'leads', label: 'Leads' },
+  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'team', label: 'Team' },
+];
 
 /** Where to land after loading: the first thing still to do. */
 function firstStep(state: OnboardingState): StepId {
   if (!state.site_url) return 'website';
-  if (state.installed_at) return 'install';
+  if (state.installed_at) return 'inbox';
   return 'assistant';
 }
 
@@ -110,6 +119,15 @@ function App() {
               );
             })}
           </ol>
+          <p class="nav-group">Your team</p>
+          <ol class="steps">
+            {ADMIN.map((s) => (
+              <li key={s.id}>
+                <button type="button" class={`step${step === s.id ? ' is-current' : ''}`} disabled={!current.site_url}
+                  aria-current={step === s.id ? 'page' : undefined} onClick={() => setStep(s.id)}>{s.label}</button>
+              </li>
+            ))}
+          </ol>
         </nav>
         {current.crawl && <CrawlMeter crawl={current.crawl} compact />}
         <div class="account">
@@ -125,6 +143,10 @@ function App() {
         {step === 'install' && <InstallStep state={current} />}
         {step === 'orders' && <OrdersStep state={current} onChange={() => void load()} />}
         {step === 'requests' && <RequestsStep state={current} onChange={() => void load()} />}
+        {step === 'inbox' && <InboxStep />}
+        {step === 'leads' && <LeadsStep />}
+        {step === 'knowledge' && <KnowledgeStep />}
+        {step === 'team' && <TeamStep state={current} />}
       </main>
     </div>
   );

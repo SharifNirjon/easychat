@@ -157,6 +157,7 @@ class RequestsConfig(BaseModel):
     notify_email: str | None = Field(default=None, pattern=EMAIL_PATTERN, max_length=254)  # None: the owner's
     booking_url: HttpsUrl | None = None                         # "Book a call" (W-10), if the team has one
     retention_days: int = Field(default=90, ge=7, le=365)       # requests are deleted after this
+    chat_retention_days: int = Field(default=90, ge=7, le=730)  # conversations too (step 10; purged hourly)
     leads: bool = True                                          # contact form + "talk to a person"
     returns: ReturnsConfig | None = Field(default_factory=ReturnsConfig)   # None: no return requests
 
@@ -198,6 +199,7 @@ class TenantLimits(BaseModel):
     max_pages: int = Field(default=50, gt=0, le=MAX_CRAWL_PAGES)     # pages per crawl
     daily_crawls: int = Field(default=3, gt=0)                       # crawls started per day
     daily_requests: int = Field(default=50, gt=0)                    # chat-form requests sent per day
+    team_members: int = Field(default=5, gt=0)                       # people who can sign in (step 10)
 
 
 class TenantSeed(BaseModel):

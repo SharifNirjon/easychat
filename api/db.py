@@ -69,6 +69,13 @@ async def purge_expired_requests() -> int:
         return (await cur.fetchone())["deleted"]
 
 
+async def purge_old_conversations() -> int:
+    """Delete each tenant's conversations older than its chat retention (SECURITY DEFINER, step 10)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT purge_old_conversations() AS deleted")
+        return (await cur.fetchone())["deleted"]
+
+
 async def ping() -> None:
     """Cheapest possible query: proves Postgres is reachable (used by /ready)."""
     async with pool.connection() as conn:

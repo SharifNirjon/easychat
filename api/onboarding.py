@@ -94,6 +94,7 @@ async def _state(session: Session) -> dict:
     key = row["public_key"]
     return {
         "email": session.email,
+        "role": session.role,                                    # owner | member (step 10)
         "status": row["status"],
         "plan": row["plan"],
         "site_url": row["site_url"],

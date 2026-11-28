@@ -39,7 +39,7 @@ ARTICLES_HEADING = "=== General articles (background only: their examples are no
 
 def _source(hit: Hit) -> str:
     """One chunk with its page title, defused."""
-    label = "Article" if hit.kind == "article" else "Page"
+    label = {"article": "Article", "entry": "Written by the team"}.get(hit.kind, "Page")
     return f"--- {label}: {_defuse(hit.title or hit.url)} ---\n{_defuse(hit.content)}"
 
 
@@ -158,7 +158,7 @@ def sources_block(hits: list[Hit]) -> list[dict]:
     """The distinct pages behind the answer, best first."""
     items, seen = [], set()
     for hit in hits:
-        if hit.url in seen:
+        if hit.url in seen or hit.kind == "entry":     # the team's own entries have no page to link
             continue
         seen.add(hit.url)
         items.append({"title": _cut(hit.title or hit.url, 120), "url": hit.url})

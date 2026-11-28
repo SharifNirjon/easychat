@@ -28,6 +28,7 @@ function SettingsForm({ settings, orders, onSaved }: { settings: RequestSettings
   const [email, setEmail] = useState(settings.notify_email ?? '');
   const [booking, setBooking] = useState(settings.booking_url ?? '');
   const [retention, setRetention] = useState(settings.retention_days);
+  const [chatDays, setChatDays] = useState(settings.chat_retention_days);
   const [leads, setLeads] = useState(settings.leads);
   const [returns, setReturns] = useState(settings.returns);
   const [windowDays, setWindowDays] = useState(settings.return_window_days);
@@ -39,7 +40,7 @@ function SettingsForm({ settings, orders, onSaved }: { settings: RequestSettings
     setSaved(false);
     void run(async () => {
       await api.saveRequestSettings({
-        notify_email: email.trim() || null, booking_url: booking.trim() || null, retention_days: retention,
+        notify_email: email.trim() || null, booking_url: booking.trim() || null, retention_days: retention, chat_retention_days: chatDays,
         leads, returns, return_window_days: windowDays,
       });
       setSaved(true);
@@ -62,6 +63,7 @@ function SettingsForm({ settings, orders, onSaved }: { settings: RequestSettings
       <Field label="Booking page for calls (optional)" value={booking} onInput={setBooking}
         placeholder="https://cal.com/myshop" required={false} />
       <NumberField label="Delete requests after (days)" value={retention} min={7} max={365} onInput={setRetention} />
+      <NumberField label="Delete chats after (days)" value={chatDays} min={7} max={730} onInput={setChatDays} />
       <p class="muted small">Visitors always tick a consent box first, which names your company and this retention
         period. Nothing is changed in your store: the team decides on every request by email.</p>
       <div><button type="submit" class="primary" disabled={busy}>Save</button></div>

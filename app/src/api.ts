@@ -26,6 +26,7 @@ export interface Crawl {
 /** Everything the app renders from (GET /api/onboarding). */
 export interface OnboardingState {
   email: string;
+  role: 'owner' | 'member';
   status: 'onboarding' | 'live' | 'suspended';
   plan: string;
   site_url: string | null;
@@ -56,6 +57,7 @@ export interface RequestSettings {
   sends_to: string | null;         // where team emails actually go
   booking_url: string | null;
   retention_days: number;
+  chat_retention_days: number;
   leads: boolean;
   returns: boolean;
   return_window_days: number;
@@ -84,6 +86,46 @@ export interface OrderTestResult {
   status?: string;
   item_count?: number | null;
   orders: OrdersConnection | null;
+}
+
+// --- Admin (step 10) ---------------------------------------------------------------------------
+
+export interface Page<T> { total: number; page: number; page_size: number; items: T[] }
+
+export interface ConversationRow {
+  id: string; created_at: string; last_message_at: string; turns: number; status: 'open' | 'resolved';
+  preview: string; flagged: boolean;
+  requests: { kind: string; status: string; name: string | null; order: string | null }[];
+}
+
+export interface RequestItem {
+  id: string; kind: 'lead' | 'handoff' | 'return'; status: 'new' | 'contacted' | 'closed';
+  data: Record<string, unknown>; consent: string; consented_at: string; expires_at: string;
+  emailed_at: string | null; webhook_sent_at: string | null; webhook_error: string | null;
+  conversation_id: string | null;
+}
+
+export interface ConversationDetail {
+  id: string; status: 'open' | 'resolved'; created_at: string; last_message_at: string;
+  messages: { role: 'user' | 'assistant'; content: string; at: string; flags: string[] }[];
+  requests: RequestItem[];
+}
+
+export interface KbEntry {
+  id: string; section: string; title: string; body: string; live: boolean; changed: boolean; deleted: boolean;
+}
+export interface KbPage { id: number; url: string; title: string; kind: string; hidden: boolean; chunks: number }
+export interface KbState {
+  pages: KbPage[]; entries: KbEntry[]; changes: number;
+  publish: { state: 'queued' | 'running' | 'done' | 'failed'; detail: string } | null;
+}
+export interface AskResult {
+  hits: { title: string; kind: string; url: string | null; score: number; excerpt: string }[];
+  answer: string | null; knows: boolean; error: string | null;
+}
+export interface TeamState {
+  you: { email: string; role: string }; max_members: number;
+  members: { id: string; email: string; role: 'owner' | 'member'; joined: string; last_sign_in: string | null }[];
 }
 
 /** An API error with the server's visitor-safe message. */
@@ -139,6 +181,28 @@ export const api = {
     call<{ webhook: Webhook; secret: string }>('PUT', '/api/onboarding/requests/webhook', { url }),
   testWebhook: () => call<{ ok: boolean; detail?: string }>('POST', '/api/onboarding/requests/webhook/test'),
   disconnectWebhook: () => call<void>('DELETE', '/api/onboarding/requests/webhook'),
+  // Admin (step 10)
+  conversations: (params: Record<string, string>) =>
+    call<Page<ConversationRow>>('GET', `/api/admin/conversations?${new URLSearchParams(params)}`),
+  conversation: (id: string) => call<ConversationDetail>('GET', `/api/admin/conversations/${id}`),
+  setConversationStatus: (id: string, status: string) =>
+    call<unknown>('PUT', `/api/admin/conversations/${id}/status`, { status }),
+  deleteConversation: (id: string) => call<void>('DELETE', `/api/admin/conversations/${id}`),
+  requests: (params: Record<string, string>) =>
+    call<Page<RequestItem>>('GET', `/api/admin/requests?${new URLSearchParams(params)}`),
+  setRequestStatus: (id: string, status: string) => call<unknown>('PUT', `/api/admin/requests/${id}/status`, { status }),
+  /** A plain link (the browser downloads it with the session cookie). */
+  exportUrl: (kind: string) => `/api/admin/requests/export.csv?kind=${encodeURIComponent(kind)}`,
+  kb: () => call<KbState>('GET', '/api/admin/kb'),
+  saveEntry: (entry: { section: string; title: string; body: string }, id?: string) =>
+    id ? call<KbEntry>('PUT', `/api/admin/kb/entries/${id}`, entry) : call<KbEntry>('POST', '/api/admin/kb/entries', entry),
+  deleteEntry: (id: string) => call<void>('DELETE', `/api/admin/kb/entries/${id}`),
+  hidePage: (id: number, hidden: boolean) => call<unknown>('PUT', `/api/admin/kb/pages/${id}`, { hidden }),
+  publish: () => call<unknown>('POST', '/api/admin/kb/publish'),
+  ask: (question: string) => call<AskResult>('POST', '/api/admin/kb/ask', { question }),
+  team: () => call<TeamState>('GET', '/api/admin/team'),
+  invite: (email: string) => call<unknown>('POST', '/api/admin/team', { email }),
+  removeMember: (id: string) => call<void>('DELETE', `/api/admin/team/${id}`),
 };
 
 /** True while a crawl is waiting for the worker or running. */

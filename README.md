@@ -14,6 +14,7 @@ Multi-tenant AI chatbot SaaS. MVP: "Aria" widget + admin console. See `CLAUDE.md
 | `app/` | Onboarding web app (Preact), served by the API at `/app/` |
 | `api/auth.py`, `api/onboarding.py`, `api/worker.py` | Self-serve sign-up, onboarding API, background worker |
 | `api/order_*.py`, `api/secretbox.py` | Order tracking: Shopify / generic order API, email codes, encrypted credentials |
+| `api/admin.py`, `api/kb_admin.py` | Admin: inbox, leads + CSV export, knowledge entries + publish, team invites |
 | `api/chat_forms.py`, `api/team_requests.py`, `api/returns.py` | Chat forms: returns, contact / handoff, transcript, delete my data; delivery by email + webhook |
 
 ## Prerequisites
@@ -283,6 +284,22 @@ A fixed set of forms, answered by code (not the model) when a visitor asks for t
   transcript codes: 3 per chat, 6 per client and 3 per address per hour.
 - **End-to-end check** (the step 9 "Done when"), against the running API, worker and Mailpit:
   `python requests_check.py` (runs its own webhook receiver on port 8791; needs no model credits).
+
+## 13. Admin (the team's console)
+Signed-in owners and members see **Inbox · Leads · Knowledge · Team** under the setup steps in
+`/app/` (an installed account opens on the Inbox).
+- **Inbox:** every chat (search, filters: needs follow-up, with a request, open, resolved), the
+  transcript, the request with its consent; mark resolved, reply by email, delete data.
+- **Leads:** contact requests and returns, status new / contacted / closed, CSV export (cells
+  starting with `= + - @` are made harmless; every export is logged in `admin_audit`).
+- **Knowledge:** your own entries (draft until **Publish**: the worker indexes them; answers from
+  them show no source link), hide crawled pages (re-crawls keep them hidden), and a test console
+  that asks the published knowledge.
+- **Team:** the owner invites members by email (a sign-in link); members do everything except
+  manage the team. A removed member is signed out at once. Free plan: 5 people.
+- **Chat retention:** chats are deleted after `Delete chats after` days (default 90, in
+  Requests & privacy), hourly by the worker.
+- **End-to-end check** (the step 10 "Done when"): `python admin_check.py` (API + worker + Mailpit).
 
 ## Config notes
 - `APP_ENV` is required: `local | test | staging | production`. `/docs` is only served in local/test.

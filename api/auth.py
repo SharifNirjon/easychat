@@ -17,6 +17,10 @@ fragment (#), which browsers never send to servers or put in Referer headers.
 
 CSRF: every state-changing /api request must come from the app's own origin (same_origin),
 on top of the SameSite=Lax cookie.
+
+Team (step 10): an owner invites members (admin.py); an invite is a user row plus a sign-in link.
+Every request re-reads the user's row, so a removed member is signed out at once and the role
+(owner / member) is always current; owner_only() guards team management.
 """
 import hashlib
 import json
@@ -79,6 +83,7 @@ class Session:
     user_id: UUID
     tenant_id: UUID
     email: str
+    role: str = "owner"           # read from the users row on every request (not stored in Redis)
 
 
 def _digest(secret: str) -> str:
@@ -107,18 +112,37 @@ def signin_email(link: str) -> str:
     )
 
 
+def invite_email(company: str, inviter: str, link: str) -> str:
+    """The plain-text email inviting a team member (step 10)."""
+    return (
+        "Hi,\n\n"
+        f"{inviter} invited you to the {company} team on easychat, to read the website assistant's chats "
+        "and leads.\n\n"
+        f"Sign in with this link:\n\n{link}\n\n"
+        f"The link works once and expires in {SIGNIN_TOKEN_TTL_SECONDS // 60} minutes. Later, sign in at "
+        f"{settings.app_base_url}/app/ with this email address.\n"
+        "If you don't know why you got this, you can ignore it.\n"
+    )
+
+
+async def send_link(email: str, subject: str, text_for_link) -> None:
+    """Create a one-time sign-in token for `email` and email the link (text_for_link(link) -> body).
+    503 if the email can't be sent (the token is then dropped)."""
+    token = secrets.token_urlsafe(32)
+    await limits.client.set(_token_key(token), email, ex=SIGNIN_TOKEN_TTL_SECONDS)
+    link = f"{settings.app_base_url}/app/#signin={token}"
+    try:
+        await mailer.send_email(email, subject, text_for_link(link))
+    except mailer.MailError as exc:
+        await limits.client.delete(_token_key(token))
+        raise HTTPException(status_code=503, detail="We couldn't send the email. Please try again.") from exc
+
+
 @router.post("/start", status_code=202)
 async def start(body: EmailIn, request: Request) -> dict:
     """Email a one-time sign-in link. Same answer whether or not the address has an account."""
     await limits.check_signin(body.email, limits.client_ip(request))
-    token = secrets.token_urlsafe(32)
-    await limits.client.set(_token_key(token), body.email, ex=SIGNIN_TOKEN_TTL_SECONDS)
-    link = f"{settings.app_base_url}/app/#signin={token}"
-    try:
-        await mailer.send_email(body.email, "Your easychat sign-in link", signin_email(link))
-    except mailer.MailError as exc:
-        await limits.client.delete(_token_key(token))
-        raise HTTPException(status_code=503, detail="We couldn't send the email. Please try again.") from exc
+    await send_link(body.email, "Your easychat sign-in link", signin_email)
     return {"ok": True}
 
 
@@ -156,21 +180,36 @@ async def verify(body: TokenIn, request: Request, response: Response) -> dict:
     async with db.tenant_tx(session.tenant_id) as conn:
         await conn.execute("UPDATE users SET last_login_at = now() WHERE id = %s", (session.user_id,))
     session_id = secrets.token_urlsafe(32)
-    stored = json.dumps({k: str(v) for k, v in asdict(session).items()})
+    stored = json.dumps({k: str(v) for k, v in asdict(session).items() if k != "role"})
     await limits.client.set(_session_key(session_id), stored, ex=SESSION_TTL_SECONDS)
     _set_session_cookie(response, session_id)
     return {"email": email}
 
 
 async def current_session(ec_session: str | None = Cookie(default=None)) -> Session:
-    """FastAPI dependency: the signed-in session, or 401."""
+    """FastAPI dependency: the signed-in session, or 401. The user must still exist (a member the
+    owner removed is signed out at once); the role comes from the database, never the cookie."""
     if not ec_session or len(ec_session) > 100:
         raise HTTPException(status_code=401, detail="Please sign in")
     raw = await limits.client.get(_session_key(ec_session))
     if raw is None:
         raise HTTPException(status_code=401, detail="Your session has expired. Please sign in again.")
     data = json.loads(raw)
-    return Session(user_id=UUID(data["user_id"]), tenant_id=UUID(data["tenant_id"]), email=data["email"])
+    user_id, tenant_id = UUID(data["user_id"]), UUID(data["tenant_id"])
+    async with db.tenant_tx(tenant_id) as conn:
+        cur = await conn.execute("SELECT role FROM users WHERE id = %s", (user_id,))
+        row = await cur.fetchone()
+    if row is None:
+        await limits.client.delete(_session_key(ec_session))
+        raise HTTPException(status_code=401, detail="You no longer have access to this account.")
+    return Session(user_id=user_id, tenant_id=tenant_id, email=data["email"], role=row["role"])
+
+
+async def owner_only(session: Session = Depends(current_session)) -> Session:
+    """FastAPI dependency: the session, if it is the account's owner (403 for members)."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Only the account owner can do this")
+    return session
 
 
 @router.post("/logout", status_code=204)

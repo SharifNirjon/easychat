@@ -208,6 +208,23 @@ async def count_webhook_test(tenant_id: UUID) -> None:
         raise LimitExceeded("Too many test deliveries. Please try again in an hour.", retry_after=HOUR)
 
 
+INVITES_PER_TENANT_DAY = 20              # team invites one account can send per day (step 10)
+EXPORTS_PER_TENANT_HOUR = 30              # lead CSV exports per hour
+
+
+async def count_invite(tenant_id: UUID) -> None:
+    """Count a team invite email; 429 when over."""
+    if await _hit(f"rl:invite:{tenant_id}:{_today()}", DAY) > INVITES_PER_TENANT_DAY:
+        raise LimitExceeded("Too many invites today. Please try again tomorrow.", retry_after=DAY)
+
+
+async def count_export(tenant_id: UUID) -> None:
+    """Count a lead export; 429 when over."""
+    hour = _now().strftime("%Y%m%d%H")
+    if await _hit(f"rl:export:{tenant_id}:{hour}", HOUR) > EXPORTS_PER_TENANT_HOUR:
+        raise LimitExceeded("Too many exports. Please try again in an hour.", retry_after=HOUR)
+
+
 def _budget_key(tenant_id: UUID) -> str:
     """Redis key for a tenant's token spend today (UTC day)."""
     return f"budget:tokens:{tenant_id}:{_now().strftime('%Y%m%d')}"
